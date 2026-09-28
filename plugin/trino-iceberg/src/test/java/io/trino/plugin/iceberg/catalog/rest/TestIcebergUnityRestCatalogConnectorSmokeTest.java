@@ -232,6 +232,13 @@ final class TestIcebergUnityRestCatalogConnectorSmokeTest
 
     @Test
     @Override
+    public void testBranchOperations()
+    {
+        testFailsDueToReadOnlyCatalog(super::testBranchOperations);
+    }
+
+    @Test
+    @Override
     public void testDeleteRowsConcurrently()
     {
         testFailsDueToReadOnlyCatalog(super::testDeleteRowsConcurrently);

@@ -13,6 +13,8 @@
  */
 package io.trino.plugin.lakehouse;
 
+import com.google.common.collect.ImmutableList;
+import io.trino.testing.sql.TestTable;
 import org.junit.jupiter.api.Test;
 
 import static io.trino.plugin.iceberg.TableType.ALL_ENTRIES;
@@ -29,6 +31,8 @@ import static io.trino.plugin.iceberg.TableType.PROPERTIES;
 import static io.trino.plugin.iceberg.TableType.REFS;
 import static io.trino.plugin.iceberg.TableType.SNAPSHOTS;
 import static io.trino.plugin.lakehouse.TableType.ICEBERG;
+import static io.trino.spi.StandardErrorCode.BRANCH_NOT_FOUND;
+import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestLakehouseIcebergConnectorSmokeTest
@@ -92,5 +96,30 @@ public class TestLakehouseIcebergConnectorSmokeTest
 
         assertThat(query("SELECT count(*) FROM lakehouse.tpch.\"region$timeline\""))
                 .failure().hasMessageMatching(".* Table .* does not exist");
+    }
+
+    @Test
+    void testBranches()
+    {
+        try (TestTable table = newTrinoTable("test_branches_", "(id integer)", ImmutableList.of("1"))) {
+            assertUpdate("CREATE BRANCH test_branch IN TABLE " + table.getName());
+            assertThat(query("SHOW BRANCHES IN TABLE " + table.getName()))
+                    .skippingTypesCheck()
+                    .matches("VALUES 'main', 'test_branch'");
+
+            assertThat(query("INSERT INTO " + table.getName() + "@test_branch VALUES 2"))
+                    .failure()
+                    .hasErrorCode(NOT_SUPPORTED)
+                    .hasMessage("Writing to Iceberg branches is not supported");
+            assertThat(query("INSERT INTO " + table.getName() + "@missing_branch VALUES 2"))
+                    .failure()
+                    .hasErrorCode(BRANCH_NOT_FOUND)
+                    .hasMessage("line 1:1: Branch 'missing_branch' does not exist");
+
+            assertUpdate("DROP BRANCH test_branch IN TABLE " + table.getName());
+            assertThat(query("SHOW BRANCHES IN TABLE " + table.getName()))
+                    .skippingTypesCheck()
+                    .matches("VALUES 'main'");
+        }
     }
 }

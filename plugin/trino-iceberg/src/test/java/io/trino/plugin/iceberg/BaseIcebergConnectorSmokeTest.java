@@ -947,6 +947,37 @@ public abstract class BaseIcebergConnectorSmokeTest
         return () -> {};
     }
 
+    @Test
+    public void testBranchOperations()
+    {
+        if (!hasBehavior(SUPPORTS_CREATE_TABLE)) {
+            return;
+        }
+
+        try (TestTable table = newTrinoTable("test_branch_operations_", "(id integer)", ImmutableList.of("1"))) {
+            assertUpdate("CREATE BRANCH test_branch IN TABLE " + table.getName());
+            assertUpdate("INSERT INTO " + table.getName() + " VALUES 2", 1);
+            assertThat(query("SHOW BRANCHES IN TABLE " + table.getName()))
+                    .skippingTypesCheck()
+                    .matches("VALUES 'main', 'test_branch'");
+            assertThat(query("SELECT id FROM " + table.getName() + " FOR VERSION AS OF 'test_branch'"))
+                    .matches("VALUES 1");
+
+            assertUpdate("CREATE OR REPLACE BRANCH test_branch IN TABLE " + table.getName());
+            assertThat(query("SELECT id FROM " + table.getName() + " FOR VERSION AS OF 'test_branch'"))
+                    .matches("VALUES 1, 2");
+
+            assertThat(query("INSERT INTO " + table.getName() + "@test_branch VALUES 3"))
+                    .failure()
+                    .hasMessage("Writing to Iceberg branches is not supported");
+
+            assertUpdate("DROP BRANCH test_branch IN TABLE " + table.getName());
+            assertThat(query("SHOW BRANCHES IN TABLE " + table.getName()))
+                    .skippingTypesCheck()
+                    .matches("VALUES 'main'");
+        }
+    }
+
     private long getMostRecentSnapshotId(String tableName)
     {
         return (long) Iterables.getOnlyElement(getQueryRunner().execute(format("SELECT snapshot_id FROM \"%s$snapshots\" ORDER BY committed_at DESC LIMIT 1", tableName))

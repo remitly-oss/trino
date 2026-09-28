@@ -1947,6 +1947,54 @@ The `COMMENT` option is supported for adding table columns through the
 The connector supports the command {doc}`COMMENT </sql/comment>` for setting
 comments on existing entities.
 
+(iceberg-branches)=
+#### Branches
+
+The connector supports creating, listing, and dropping the branches of a table.
+
+Create a branch from the current snapshot of the table with
+[](/sql/create-branch), or from another branch with the `FROM` clause:
+
+```sql
+CREATE BRANCH audit IN TABLE example.testdb.customer_orders;
+
+CREATE BRANCH audit_copy IN TABLE example.testdb.customer_orders FROM audit;
+```
+
+`CREATE OR REPLACE BRANCH` points an existing branch at the source snapshot and
+keeps the retention settings of the branch. In a table without snapshots, a new
+branch starts from an empty snapshot. The connector does not support branch
+properties in the `WITH` clause, or creating or replacing the `main` branch.
+
+List the branches of a table with [](/sql/show-branches):
+
+```sql
+SHOW BRANCHES IN TABLE example.testdb.customer_orders;
+```
+
+```text
+   Branch
+------------
+ main
+ audit
+ audit_copy
+```
+
+The result contains only branches, not tags. A table has no `main` branch until
+its first snapshot is committed. Tables created by Trino always have one. Use
+the [`$refs` table](iceberg-metadata-tables) to list tags and branch details
+such as the snapshot ID.
+
+Drop a branch with [](/sql/drop-branch). The `main` branch cannot be dropped:
+
+```sql
+DROP BRANCH audit_copy IN TABLE example.testdb.customer_orders;
+```
+
+Use [time travel queries](iceberg-time-travel) to read data from a branch. The
+connector does not support fast-forwarding branches with [](/sql/alter-branch),
+or writing to a branch with the `table@branch` syntax.
+
 (iceberg-tables)=
 #### Partitioned tables
 
@@ -2137,7 +2185,8 @@ FROM example.testdb.customer_orders FOR TIMESTAMP AS OF TIMESTAMP '2022-03-23 00
 ```
 
 Iceberg supports named references of snapshots via branches and tags.
-Time travel can be performed to branches and tags in the table.
+Time travel can be performed to branches and tags in the table. See
+[](iceberg-branches) to list the branches of a table.
 
 ```sql
 SELECT *

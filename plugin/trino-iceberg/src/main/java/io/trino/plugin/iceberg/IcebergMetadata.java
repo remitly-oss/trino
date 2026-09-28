@@ -164,6 +164,7 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileMetadata;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.IsolationLevel;
+import org.apache.iceberg.ManageSnapshots;
 import org.apache.iceberg.ManifestFile;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.PartitionField;
@@ -399,6 +400,7 @@ import static io.trino.plugin.iceberg.procedure.MigrationUtils.addFilesFromTable
 import static io.trino.plugin.iceberg.procedure.OptimizeManifests.optimizeManifests;
 import static io.trino.plugin.iceberg.procedure.RemoveOrphanFiles.removeOrphanFiles;
 import static io.trino.plugin.iceberg.util.SystemTableUtil.getAllPartitionFields;
+import static io.trino.spi.StandardErrorCode.BRANCH_NOT_FOUND;
 import static io.trino.spi.StandardErrorCode.COLUMN_ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.COLUMN_NOT_FOUND;
 import static io.trino.spi.StandardErrorCode.INVALID_ANALYZE_PROPERTY;
@@ -442,6 +444,7 @@ import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.joining;
 import static org.apache.iceberg.MetadataTableType.ALL_ENTRIES;
 import static org.apache.iceberg.MetadataTableType.ENTRIES;
+import static org.apache.iceberg.SnapshotRef.MAIN_BRANCH;
 import static org.apache.iceberg.SnapshotSummary.DELETED_RECORDS_PROP;
 import static org.apache.iceberg.SnapshotSummary.REMOVED_EQ_DELETES_PROP;
 import static org.apache.iceberg.SnapshotSummary.REMOVED_POS_DELETES_PROP;
@@ -2550,6 +2553,91 @@ public class IcebergMetadata
     public FunctionDependencyDeclaration getFunctionDependencies(ConnectorSession session, FunctionId functionId, BoundSignature boundSignature)
     {
         return FunctionDependencyDeclaration.NO_DEPENDENCIES;
+    }
+
+    @Override
+    public void createBranch(ConnectorSession session, ConnectorTableHandle tableHandle, String branch, Optional<String> fromBranch, SaveMode saveMode, Map<String, Object> properties)
+    {
+        IcebergTableHandle table = checkValidTableHandle(tableHandle);
+        if (branch.equals(MAIN_BRANCH)) {
+            throw new TrinoException(NOT_SUPPORTED, "Creating or replacing the main branch is not supported");
+        }
+
+        BaseTable icebergTable = catalog.loadTable(session, table.getSchemaTableName());
+        SnapshotRef existingRef = icebergTable.refs().get(branch);
+        if (existingRef != null && existingRef.isTag()) {
+            throw new TrinoException(INVALID_ARGUMENTS, "Cannot create branch '%s': a tag with that name already exists".formatted(branch));
+        }
+
+        OptionalLong snapshotId = sourceSnapshotId(icebergTable, fromBranch);
+        ManageSnapshots manageSnapshots = icebergTable.manageSnapshots();
+        if (existingRef != null && saveMode == SaveMode.REPLACE) {
+            if (snapshotId.isEmpty()) {
+                throw new TrinoException(NOT_SUPPORTED, "Replacing a branch in a table without snapshots is not supported");
+            }
+            // Keeps the retention settings of the branch
+            manageSnapshots.replaceBranch(branch, snapshotId.orElseThrow());
+        }
+        else if (snapshotId.isPresent()) {
+            manageSnapshots.createBranch(branch, snapshotId.orElseThrow());
+        }
+        else {
+            // Starts the branch from a new empty snapshot
+            manageSnapshots.createBranch(branch);
+        }
+        manageSnapshots.commit();
+    }
+
+    private OptionalLong sourceSnapshotId(Table icebergTable, Optional<String> fromBranch)
+    {
+        if (fromBranch.isEmpty()) {
+            return getCurrentSnapshotId(icebergTable);
+        }
+        SnapshotRef ref = icebergTable.refs().get(fromBranch.get());
+        if (ref == null || !ref.isBranch()) {
+            throw new TrinoException(BRANCH_NOT_FOUND, "Branch '%s' does not exist".formatted(fromBranch.get()));
+        }
+        return OptionalLong.of(ref.snapshotId());
+    }
+
+    @Override
+    public void dropBranch(ConnectorSession session, ConnectorTableHandle tableHandle, String branch)
+    {
+        IcebergTableHandle table = checkValidTableHandle(tableHandle);
+        if (branch.equals(MAIN_BRANCH)) {
+            throw new TrinoException(INVALID_ARGUMENTS, "Cannot drop the main branch");
+        }
+
+        catalog.loadTable(session, table.getSchemaTableName()).manageSnapshots()
+                .removeBranch(branch)
+                .commit();
+    }
+
+    @Override
+    public Collection<String> listBranches(ConnectorSession session, SchemaTableName tableName)
+    {
+        return loadRefs(session, tableName).entrySet().stream()
+                .filter(entry -> entry.getValue().isBranch())
+                .map(Entry::getKey)
+                .collect(toImmutableList());
+    }
+
+    @Override
+    public boolean branchExists(ConnectorSession session, SchemaTableName tableName, String branch)
+    {
+        SnapshotRef ref = loadRefs(session, tableName).get(branch);
+        return ref != null && ref.isBranch();
+    }
+
+    private Map<String, SnapshotRef> loadRefs(ConnectorSession session, SchemaTableName tableName)
+    {
+        try {
+            return catalog.loadTable(session, tableName).refs();
+        }
+        catch (UnknownTableTypeException e) {
+            // Non-Iceberg tables, such as tables redirected to another catalog, have no branches
+            return ImmutableMap.of();
+        }
     }
 
     @Override
