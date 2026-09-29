@@ -519,6 +519,13 @@ final class TestIcebergUnityRestCatalogConnectorSmokeTest
         testFailsDueToReadOnlyCatalog(super::testAnalyze);
     }
 
+    @Test
+    @Override
+    public void testBranchOperations()
+    {
+        testFailsDueToReadOnlyCatalog(super::testBranchOperations);
+    }
+
     /**
      * Verifies that the given action fails due to the read-only security mode
      * configured via {@code iceberg.security=read_only}.
