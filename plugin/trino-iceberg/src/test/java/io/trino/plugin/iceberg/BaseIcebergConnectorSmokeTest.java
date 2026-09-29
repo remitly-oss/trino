@@ -60,6 +60,8 @@ import static io.trino.plugin.iceberg.IcebergSessionProperties.COLLECT_EXTENDED_
 import static io.trino.plugin.iceberg.IcebergTestUtils.FILE_IO_FACTORY;
 import static io.trino.plugin.iceberg.IcebergTestUtils.getFileSystemFactory;
 import static io.trino.plugin.iceberg.IcebergTestUtils.getMetadataFileAndUpdatedMillis;
+import static io.trino.spi.StandardErrorCode.BRANCH_NOT_FOUND;
+import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.testing.TestingAccessControlManager.TestingPrivilegeType.DROP_TABLE;
 import static io.trino.testing.TestingAccessControlManager.privilege;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_CREATE_TABLE;
@@ -70,6 +72,7 @@ import static java.time.ZoneOffset.UTC;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.apache.iceberg.SnapshotRef.MAIN_BRANCH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
 
@@ -945,6 +948,41 @@ public abstract class BaseIcebergConnectorSmokeTest
     protected AutoCloseable createSparkIcebergTable(String schema)
     {
         return () -> {};
+    }
+
+    @Test
+    public void testBranchOperations()
+    {
+        if (!hasBehavior(SUPPORTS_CREATE_TABLE)) {
+            return;
+        }
+
+        String tableName = "test_branch_operations_" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " (id INTEGER, name VARCHAR)");
+        assertUpdate("INSERT INTO " + tableName + " VALUES (1, 'a')", 1);
+
+        assertThat(query("SHOW BRANCHES IN TABLE " + tableName))
+                .skippingTypesCheck()
+                .result()
+                .hasColumnNames("Branch")
+                .matches("VALUES VARCHAR '" + MAIN_BRANCH + "'");
+
+        assertThat(query("SELECT * FROM " + tableName + " FOR VERSION AS OF '" + MAIN_BRANCH + "'"))
+                .matches("VALUES (1, CAST('a' AS VARCHAR))");
+
+        assertThat(query("INSERT INTO " + tableName + "@" + MAIN_BRANCH + " VALUES (2, 'b')"))
+                .failure()
+                .hasErrorCode(NOT_SUPPORTED)
+                .hasMessage("Writing to Iceberg branches is not supported");
+        assertThat(query("INSERT INTO " + tableName + "@missing_branch VALUES (2, 'b')"))
+                .failure()
+                .hasErrorCode(BRANCH_NOT_FOUND)
+                .hasMessage("line 1:1: Branch 'missing_branch' does not exist");
+
+        assertThat(query("SELECT * FROM " + tableName))
+                .matches("VALUES (1, CAST('a' AS VARCHAR))");
+
+        assertUpdate("DROP TABLE " + tableName);
     }
 
     private long getMostRecentSnapshotId(String tableName)
