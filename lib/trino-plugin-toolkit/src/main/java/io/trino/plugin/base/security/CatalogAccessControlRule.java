@@ -23,7 +23,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.CatalogAccessControlRule.AccessMode.ALL;
 import static java.util.Objects.requireNonNull;
@@ -38,18 +37,18 @@ public class CatalogAccessControlRule
             Optional.empty());
 
     private final AccessMode accessMode;
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
-    private final Optional<Pattern> groupRegex;
-    private final Optional<Pattern> catalogRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
+    private final Optional<StringMatcher> groupRegex;
+    private final Optional<StringMatcher> catalogRegex;
 
     @JsonCreator
     public CatalogAccessControlRule(
             @JsonProperty("allow") AccessMode accessMode,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("catalog") Optional<Pattern> catalogRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("catalog") Optional<StringMatcher> catalogRegex)
     {
         this.accessMode = requireNonNull(accessMode, "accessMode is null");
         this.userRegex = requireNonNull(userRegex, "userRegex is null");
@@ -60,10 +59,10 @@ public class CatalogAccessControlRule
 
     public Optional<AccessMode> match(String user, Set<String> roles, Set<String> groups, String catalog)
     {
-        if (userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true) &&
-                groupRegex.map(regex -> groups.stream().anyMatch(group -> regex.matcher(group).matches())).orElse(true) &&
-                catalogRegex.map(regex -> regex.matcher(catalog).matches()).orElse(true)) {
+        if (userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true) &&
+                groupRegex.map(regex -> regex.matchesAny(groups)).orElse(true) &&
+                catalogRegex.map(regex -> regex.matches(catalog)).orElse(true)) {
             return Optional.of(accessMode);
         }
         return Optional.empty();

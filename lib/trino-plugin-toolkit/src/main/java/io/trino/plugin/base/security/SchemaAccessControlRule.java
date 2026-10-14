@@ -18,7 +18,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -32,18 +31,18 @@ public class SchemaAccessControlRule
             Optional.empty());
 
     private final boolean owner;
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
-    private final Optional<Pattern> groupRegex;
-    private final Optional<Pattern> schemaRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
+    private final Optional<StringMatcher> groupRegex;
+    private final Optional<StringMatcher> schemaRegex;
 
     @JsonCreator
     public SchemaAccessControlRule(
             @JsonProperty("owner") boolean owner,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("schema") Optional<Pattern> schemaRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("schema") Optional<StringMatcher> schemaRegex)
     {
         this.owner = owner;
         this.userRegex = requireNonNull(userRegex, "userRegex is null");
@@ -54,10 +53,10 @@ public class SchemaAccessControlRule
 
     public Optional<Boolean> match(String user, Set<String> roles, Set<String> groups, String schema)
     {
-        if (userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true) &&
-                groupRegex.map(regex -> groups.stream().anyMatch(group -> regex.matcher(group).matches())).orElse(true) &&
-                schemaRegex.map(regex -> regex.matcher(schema).matches()).orElse(true)) {
+        if (userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true) &&
+                groupRegex.map(regex -> regex.matchesAny(groups)).orElse(true) &&
+                schemaRegex.map(regex -> regex.matches(schema)).orElse(true)) {
             return Optional.of(owner);
         }
         return Optional.empty();
@@ -76,22 +75,22 @@ public class SchemaAccessControlRule
         return owner;
     }
 
-    Optional<Pattern> getUserRegex()
+    Optional<StringMatcher> getUserRegex()
     {
         return userRegex;
     }
 
-    Optional<Pattern> getGroupRegex()
+    Optional<StringMatcher> getGroupRegex()
     {
         return groupRegex;
     }
 
-    public Optional<Pattern> getRoleRegex()
+    public Optional<StringMatcher> getRoleRegex()
     {
         return roleRegex;
     }
 
-    Optional<Pattern> getSchemaRegex()
+    Optional<StringMatcher> getSchemaRegex()
     {
         return schemaRegex;
     }
