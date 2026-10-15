@@ -80,6 +80,9 @@ public class IcebergTableHandle
     // Branch the table was resolved through, if any
     private final Optional<String> branch;
 
+    // Whether the snapshot was selected by the wap_branch session property rather than by the query
+    private final boolean selectedByWapBranch;
+
     @JsonCreator
     @DoNotCall // For JSON deserialization only
     public static IcebergTableHandle fromJsonForDeserializationOnly(
@@ -98,7 +101,8 @@ public class IcebergTableHandle
             @JsonProperty("nameMappingJson") Optional<String> nameMappingJson,
             @JsonProperty("tableLocation") String tableLocation,
             @JsonProperty("storageProperties") Map<String, String> storageProperties,
-            @JsonProperty("branch") Optional<String> branch)
+            @JsonProperty("branch") Optional<String> branch,
+            @JsonProperty("selectedByWapBranch") boolean selectedByWapBranch)
     {
         return new IcebergTableHandle(
                 schemaName,
@@ -121,7 +125,8 @@ public class IcebergTableHandle
                 Optional.empty(),
                 ImmutableSet.of(),
                 Optional.empty(),
-                branch);
+                branch,
+                selectedByWapBranch);
     }
 
     public IcebergTableHandle(
@@ -145,7 +150,8 @@ public class IcebergTableHandle
             Optional<DataSize> maxScannedFileSize,
             Set<IcebergColumnHandle> constraintColumns,
             Optional<Boolean> forAnalyze,
-            Optional<String> branch)
+            Optional<String> branch,
+            boolean selectedByWapBranch)
     {
         this.schemaName = requireNonNull(schemaName, "schemaName is null");
         this.tableName = requireNonNull(tableName, "tableName is null");
@@ -172,6 +178,7 @@ public class IcebergTableHandle
         this.constraintColumns = ImmutableSet.copyOf(requireNonNull(constraintColumns, "constraintColumns is null"));
         this.forAnalyze = requireNonNull(forAnalyze, "forAnalyze is null");
         this.branch = requireNonNull(branch, "branch is null");
+        this.selectedByWapBranch = selectedByWapBranch;
     }
 
     @JsonProperty
@@ -304,6 +311,12 @@ public class IcebergTableHandle
         return branch;
     }
 
+    @JsonProperty
+    public boolean isSelectedByWapBranch()
+    {
+        return selectedByWapBranch;
+    }
+
     public SchemaTableName getSchemaTableName()
     {
         return new SchemaTableName(schemaName, tableName);
@@ -337,7 +350,8 @@ public class IcebergTableHandle
                 maxScannedFileSize,
                 constraintColumns,
                 forAnalyze,
-                branch);
+                branch,
+                selectedByWapBranch);
     }
 
     public IcebergTableHandle forAnalyze()
@@ -363,7 +377,8 @@ public class IcebergTableHandle
                 maxScannedFileSize,
                 constraintColumns,
                 Optional.of(true),
-                branch);
+                branch,
+                selectedByWapBranch);
     }
 
     public IcebergTableHandle forOptimize(boolean recordScannedFiles, DataSize maxScannedFileSize)
@@ -389,7 +404,39 @@ public class IcebergTableHandle
                 Optional.of(maxScannedFileSize),
                 constraintColumns,
                 forAnalyze,
-                branch);
+                branch,
+                selectedByWapBranch);
+    }
+
+    /**
+     * Returns a handle for the given snapshot of the main branch. Callers must ensure the handle was resolved with the
+     * current table schema and partition spec, as branch handles are.
+     */
+    public IcebergTableHandle forMainBranch(OptionalLong mainSnapshotId)
+    {
+        return new IcebergTableHandle(
+                schemaName,
+                tableName,
+                tableType,
+                mainSnapshotId,
+                tableSchemaJson,
+                specId,
+                partitionSpecJsons,
+                formatVersion,
+                unenforcedPredicate,
+                enforcedPredicate,
+                limit,
+                projectedColumns,
+                nameMappingJson,
+                tableLocation,
+                storageProperties,
+                tablePartitioning,
+                recordScannedFiles,
+                maxScannedFileSize,
+                constraintColumns,
+                forAnalyze,
+                Optional.empty(),
+                false);
     }
 
     public IcebergTableHandle withTablePartitioning(Optional<IcebergTablePartitioning> requiredTablePartitioning)
@@ -415,7 +462,8 @@ public class IcebergTableHandle
                 maxScannedFileSize,
                 constraintColumns,
                 forAnalyze,
-                branch);
+                branch,
+                selectedByWapBranch);
     }
 
     @Override
@@ -430,6 +478,7 @@ public class IcebergTableHandle
 
         IcebergTableHandle that = (IcebergTableHandle) o;
         return recordScannedFiles == that.recordScannedFiles &&
+                selectedByWapBranch == that.selectedByWapBranch &&
                 Objects.equals(schemaName, that.schemaName) &&
                 Objects.equals(tableName, that.tableName) &&
                 tableType == that.tableType &&
@@ -474,7 +523,8 @@ public class IcebergTableHandle
                 maxScannedFileSize,
                 constraintColumns,
                 forAnalyze,
-                branch);
+                branch,
+                selectedByWapBranch);
     }
 
     @Override

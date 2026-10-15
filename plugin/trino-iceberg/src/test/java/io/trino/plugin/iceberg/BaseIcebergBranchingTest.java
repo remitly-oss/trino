@@ -14,6 +14,7 @@
 package io.trino.plugin.iceberg;
 
 import com.google.common.collect.ImmutableMap;
+import io.trino.Session;
 import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.metastore.HiveMetastore;
 import io.trino.spi.connector.SchemaTableName;
@@ -32,15 +33,19 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Optional;
 
+import static io.trino.plugin.iceberg.IcebergSessionProperties.WAP_BRANCH;
 import static io.trino.plugin.iceberg.IcebergTestUtils.SESSION;
 import static io.trino.plugin.iceberg.IcebergTestUtils.getFileSystemFactory;
 import static io.trino.plugin.iceberg.IcebergTestUtils.getHiveMetastore;
 import static io.trino.plugin.iceberg.IcebergTestUtils.getTrinoCatalog;
 import static io.trino.spi.StandardErrorCode.INVALID_ARGUMENTS;
+import static io.trino.spi.StandardErrorCode.INVALID_SESSION_PROPERTY;
+import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.testing.TestingNames.randomNameSuffix;
 import static java.util.concurrent.TimeUnit.DAYS;
 import static org.apache.iceberg.SnapshotRef.MAIN_BRANCH;
 import static org.apache.iceberg.TableProperties.FORMAT_VERSION;
+import static org.apache.iceberg.TableProperties.WRITE_AUDIT_PUBLISH_ENABLED;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public abstract class BaseIcebergBranchingTest
@@ -62,6 +67,7 @@ public abstract class BaseIcebergBranchingTest
     {
         return IcebergQueryRunner.builder()
                 .addIcebergProperty("iceberg.format-version", String.valueOf(formatVersion))
+                .addIcebergProperty("iceberg.allowed-extra-properties", WRITE_AUDIT_PUBLISH_ENABLED)
                 .build();
     }
 
@@ -631,6 +637,355 @@ public abstract class BaseIcebergBranchingTest
                 .failure().hasMessageContaining("Branch 'test_tag' does not exist");
 
         assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testWapBranchWorkflow()
+    {
+        String tableName = "test_wap_branch_workflow_" + randomNameSuffix();
+        createWapEnabledTable(tableName);
+        try {
+            assertUpdate("CREATE BRANCH audit IN TABLE " + tableName);
+            Session wapSession = wapSession("audit");
+
+            assertUpdate(wapSession, "INSERT INTO " + tableName + " VALUES (3, 'c')", 1);
+            assertUpdate(wapSession, "UPDATE " + tableName + " SET name = 'updated' WHERE id = 1", 1);
+            assertUpdate(wapSession, "DELETE FROM " + tableName + " WHERE id = 2", 1);
+            assertUpdate(wapSession, "MERGE INTO " + tableName + " t " +
+                    "USING (VALUES (3, 'merged'), (4, 'd')) AS s(id, name) " +
+                    "ON t.id = s.id " +
+                    "WHEN MATCHED THEN UPDATE SET name = s.name " +
+                    "WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.name)", 2);
+
+            String audited = "VALUES (1, CAST('updated' AS VARCHAR)), (3, CAST('merged' AS VARCHAR)), (4, CAST('d' AS VARCHAR))";
+            assertThat(query(wapSession, "SELECT * FROM " + tableName)).matches(audited);
+            assertThat(query("SELECT * FROM " + tableName + " FOR VERSION AS OF 'audit'")).matches(audited);
+            assertThat(query("SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR))");
+
+            assertUpdate("ALTER BRANCH main IN TABLE " + tableName + " FAST FORWARD TO audit");
+            assertUpdate("DROP BRANCH audit IN TABLE " + tableName);
+            assertThat(query("SELECT * FROM " + tableName)).matches(audited);
+            assertThat(query(wapSession, "SELECT * FROM " + tableName)).matches(audited);
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    @Test
+    public void testWapBranchMetadataDeleteAndTruncate()
+    {
+        String tableName = "test_wap_branch_truncate_" + randomNameSuffix();
+        createWapEnabledTable(tableName);
+        try {
+            assertUpdate("CREATE BRANCH audit IN TABLE " + tableName);
+            Session wapSession = wapSession("audit");
+
+            // DELETE without WHERE uses DeleteFiles rather than RowDelta
+            assertUpdate(wapSession, "DELETE FROM " + tableName, 2);
+            assertThat(query(wapSession, "SELECT * FROM " + tableName)).returnsEmptyResult();
+
+            assertUpdate(wapSession, "INSERT INTO " + tableName + " VALUES (3, 'c')", 1);
+            assertUpdate(wapSession, "TRUNCATE TABLE " + tableName);
+            assertThat(query(wapSession, "SELECT * FROM " + tableName)).returnsEmptyResult();
+
+            assertThat(query("SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR))");
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    @Test
+    public void testWapBranchRequiresWapEnabledTable()
+    {
+        String tableName = "test_wap_branch_not_enabled_" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT * FROM (VALUES (1, 'a')) AS t(id, name)", 1);
+        try {
+            assertUpdate("CREATE BRANCH audit IN TABLE " + tableName);
+            assertUpdate("INSERT INTO " + tableName + "@audit VALUES (2, 'b')", 1);
+            Session wapSession = wapSession("audit");
+
+            // The session property does not apply to the table without write.wap.enabled
+            assertThat(query(wapSession, "SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR))");
+            assertUpdate(wapSession, "INSERT INTO " + tableName + " VALUES (3, 'c')", 1);
+            assertThat(query("SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (3, CAST('c' AS VARCHAR))");
+
+            assertUpdate("ALTER TABLE " + tableName + " SET PROPERTIES extra_properties = MAP(ARRAY['write.wap.enabled'], ARRAY['true'])");
+            assertThat(query(wapSession, "SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR))");
+
+            // Without the session property, the table reads and writes main
+            assertUpdate("INSERT INTO " + tableName + " VALUES (4, 'd')", 1);
+            assertThat(query("SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (3, CAST('c' AS VARCHAR)), (4, CAST('d' AS VARCHAR))");
+            assertThat(query("SELECT * FROM " + tableName + " FOR VERSION AS OF 'audit'"))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR))");
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    @Test
+    public void testWritesCreateMissingWapBranch()
+    {
+        record WapWrite(String statement, long rowCount, String branchContents) {}
+
+        List<WapWrite> writes = List.of(
+                new WapWrite("INSERT INTO %s VALUES (3, 'c')", 1, "VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR)), (3, CAST('c' AS VARCHAR))"),
+                new WapWrite("UPDATE %s SET name = 'updated' WHERE id = 1", 1, "VALUES (1, CAST('updated' AS VARCHAR)), (2, CAST('b' AS VARCHAR))"),
+                new WapWrite("DELETE FROM %s WHERE id = 1", 1, "VALUES (2, CAST('b' AS VARCHAR))"),
+                new WapWrite(
+                        "MERGE INTO %s t USING (VALUES (1, 'merged'), (3, 'c')) AS s(id, name) ON t.id = s.id " +
+                                "WHEN MATCHED THEN UPDATE SET name = s.name WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.name)",
+                        2,
+                        "VALUES (1, CAST('merged' AS VARCHAR)), (2, CAST('b' AS VARCHAR)), (3, CAST('c' AS VARCHAR))"));
+        Session wapSession = wapSession("audit");
+        String main = "VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR))";
+
+        for (WapWrite write : writes) {
+            String tableName = "test_wap_branch_created_by_write_" + randomNameSuffix();
+            createWapEnabledTable(tableName);
+            try {
+                // Like Spark, reads fall back to main until the WAP branch exists, and the first write creates it from main
+                assertThat(query(wapSession, "SELECT * FROM " + tableName)).matches(main);
+                assertUpdate(wapSession, write.statement().formatted(tableName), write.rowCount());
+
+                assertThat(loadTable(tableName).refs().get("audit").isBranch()).isTrue();
+                assertThat(query(wapSession, "SELECT * FROM " + tableName)).matches(write.branchContents());
+                assertThat(query("SELECT * FROM " + tableName)).matches(main);
+            }
+            finally {
+                assertUpdate("DROP TABLE " + tableName);
+            }
+        }
+
+        // DELETE without WHERE and TRUNCATE use DeleteFiles rather than RowDelta
+        for (boolean truncate : List.of(false, true)) {
+            String tableName = "test_wap_branch_created_by_delete_" + randomNameSuffix();
+            createWapEnabledTable(tableName);
+            try {
+                if (truncate) {
+                    assertUpdate(wapSession, "TRUNCATE TABLE " + tableName);
+                }
+                else {
+                    assertUpdate(wapSession, "DELETE FROM " + tableName, 2);
+                }
+
+                assertThat(loadTable(tableName).refs().get("audit").isBranch()).isTrue();
+                assertThat(query(wapSession, "SELECT * FROM " + tableName)).returnsEmptyResult();
+                assertThat(query("SELECT * FROM " + tableName)).matches(main);
+            }
+            finally {
+                assertUpdate("DROP TABLE " + tableName);
+            }
+        }
+    }
+
+    @Test
+    public void testExplicitBranchWithWapBranch()
+    {
+        String tableName = "test_wap_branch_explicit_branch_" + randomNameSuffix();
+        createWapEnabledTable(tableName);
+        try {
+            assertUpdate("CREATE BRANCH audit IN TABLE " + tableName);
+            assertUpdate("CREATE BRANCH other IN TABLE " + tableName);
+            long mainSnapshotId = loadTable(tableName).currentSnapshot().snapshotId();
+            Session wapSession = wapSession("audit");
+            assertUpdate(wapSession, "INSERT INTO " + tableName + " VALUES (3, 'c')", 1);
+
+            // A version in the query takes precedence over wap_branch for reads
+            String main = "VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR))";
+            assertThat(query(wapSession, "SELECT * FROM " + tableName + " FOR VERSION AS OF 'main'")).matches(main);
+            assertThat(query(wapSession, "SELECT * FROM " + tableName + " FOR VERSION AS OF 'other'")).matches(main);
+            assertThat(query(wapSession, "SELECT * FROM " + tableName + " FOR VERSION AS OF " + mainSnapshotId)).matches(main);
+
+            // Like Spark, a branch in a write statement cannot be combined with wap_branch, even when it is the WAP branch
+            for (String branch : List.of("audit", "other", MAIN_BRANCH)) {
+                assertThat(query(wapSession, "INSERT INTO " + tableName + "@" + branch + " VALUES (4, 'd')"))
+                        .failure()
+                        .hasErrorCode(INVALID_ARGUMENTS)
+                        .hasMessage("Cannot write to both branch '%s' and WAP branch 'audit' of table tpch.%s".formatted(branch, tableName));
+            }
+            assertThat(query(wapSession, "DELETE FROM " + tableName + "@audit WHERE id = 1"))
+                    .failure()
+                    .hasErrorCode(INVALID_ARGUMENTS)
+                    .hasMessage("Cannot write to both branch 'audit' and WAP branch 'audit' of table tpch.%s".formatted(tableName));
+
+            assertThat(query(wapSession, "SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR)), (3, CAST('c' AS VARCHAR))");
+            assertThat(query("SELECT * FROM " + tableName)).matches(main);
+            assertThat(query("SELECT * FROM " + tableName + " FOR VERSION AS OF 'other'")).matches(main);
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    @Test
+    public void testWapBranchNamingTag()
+    {
+        String tableName = "test_wap_branch_tag_" + randomNameSuffix();
+        createWapEnabledTable(tableName);
+        try {
+            Table table = loadTable(tableName);
+            table.manageSnapshots().createTag("audit", table.currentSnapshot().snapshotId()).commit();
+            assertUpdate("INSERT INTO " + tableName + " VALUES (3, 'c')", 1);
+            Session wapSession = wapSession("audit");
+
+            // Like Spark, reads use a tag with the WAP branch name, and writes fail
+            assertThat(query(wapSession, "SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR))");
+            for (String statement : List.of(
+                    "INSERT INTO " + tableName + " VALUES (4, 'd')",
+                    "UPDATE " + tableName + " SET name = 'updated' WHERE id = 1")) {
+                assertThat(query(wapSession, statement))
+                        .failure()
+                        .hasErrorCode(INVALID_ARGUMENTS)
+                        .hasMessage("WAP branch 'audit' of table tpch.%s is a tag, not a branch".formatted(tableName));
+            }
+            assertThat(query(wapSession, "ALTER TABLE " + tableName + " EXECUTE optimize"))
+                    .failure()
+                    .hasErrorCode(NOT_SUPPORTED)
+                    .hasMessage("Cannot execute OPTIMIZE when the wap_branch session property names a tag");
+
+            assertThat(query("SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR)), (3, CAST('c' AS VARCHAR))");
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    @Test
+    public void testTableProceduresIgnoreWapBranch()
+    {
+        String tableName = "test_wap_branch_procedures_" + randomNameSuffix();
+        createWapEnabledTable(tableName);
+        try {
+            assertUpdate("INSERT INTO " + tableName + " VALUES (3, 'c')", 1);
+            assertUpdate("CREATE BRANCH audit IN TABLE " + tableName);
+            Session wapSession = wapSession("audit");
+            assertUpdate(wapSession, "INSERT INTO " + tableName + " VALUES (4, 'd')", 1);
+            long branchSnapshotId = loadTable(tableName).refs().get("audit").snapshotId();
+
+            // Like Spark procedures, table procedures run on main
+            assertUpdate(wapSession, "ALTER TABLE " + tableName + " EXECUTE optimize");
+            assertUpdate(wapSession, "ALTER TABLE " + tableName + " EXECUTE optimize_manifests");
+            assertUpdate(wapSession, "ALTER TABLE " + tableName + " EXECUTE drop_extended_stats");
+
+            Table table = loadTable(tableName);
+            assertThat(table.currentSnapshot().operation()).isEqualTo("replace");
+            assertThat(table.refs().get("audit").snapshotId()).isEqualTo(branchSnapshotId);
+            // Metadata tables describe main
+            assertThat(query(wapSession, "SELECT sum(record_count) FROM \"" + tableName + "$files\"")).matches("VALUES BIGINT '3'");
+            assertThat(query("SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR)), (3, CAST('c' AS VARCHAR))");
+            assertThat(query(wapSession, "SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR)), (3, CAST('c' AS VARCHAR)), (4, CAST('d' AS VARCHAR))");
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    @Test
+    public void testOptimizeWithFilterAndWapBranch()
+    {
+        String tableName = "test_wap_branch_optimize_filter_" + randomNameSuffix();
+        assertUpdate(
+                "CREATE TABLE " + tableName + " WITH (partitioning = ARRAY['part'], extra_properties = MAP(ARRAY['write.wap.enabled'], ARRAY['true'])) " +
+                        "AS SELECT * FROM (VALUES (1, 1), (2, 2)) AS t(id, part)",
+                2);
+        try {
+            assertUpdate("INSERT INTO " + tableName + " VALUES (3, 1)", 1);
+            assertUpdate("CREATE BRANCH audit IN TABLE " + tableName);
+            Session wapSession = wapSession("audit");
+            assertUpdate(wapSession, "INSERT INTO " + tableName + " VALUES (4, 2)", 1);
+
+            assertUpdate(wapSession, "ALTER TABLE " + tableName + " EXECUTE optimize WHERE part = 1");
+            assertThat(loadTable(tableName).currentSnapshot().operation()).isEqualTo("replace");
+            assertThat(query("SELECT * FROM " + tableName)).matches("VALUES (1, 1), (2, 2), (3, 1)");
+
+            // The filter is checked against the partition specs of the WAP snapshot, so they must match those of main
+            assertUpdate("ALTER TABLE " + tableName + " SET PROPERTIES partitioning = ARRAY[]");
+            assertUpdate("INSERT INTO " + tableName + " VALUES (5, 1)", 1);
+            assertThat(query(wapSession, "ALTER TABLE " + tableName + " EXECUTE optimize WHERE part = 1"))
+                    .failure()
+                    .hasErrorCode(NOT_SUPPORTED)
+                    .hasMessage("Cannot execute OPTIMIZE with a filter when the wap_branch session property is set and the WAP branch uses different partition specs than main");
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    @Test
+    public void testWapBranchTableOperations()
+    {
+        String tableName = "test_wap_branch_table_operations_" + randomNameSuffix();
+        createWapEnabledTable(tableName);
+        try {
+            assertUpdate("CREATE BRANCH audit IN TABLE " + tableName);
+            Session wapSession = wapSession("audit");
+
+            assertThat(query(wapSession, "CREATE OR REPLACE TABLE " + tableName + " AS SELECT 1 AS id"))
+                    .failure()
+                    .hasErrorCode(NOT_SUPPORTED)
+                    .hasMessage("Cannot replace table tpch.%s when the wap_branch session property is set".formatted(tableName));
+
+            // Schema changes apply to the table, and branches read with the current table schema
+            assertUpdate(wapSession, "ALTER TABLE " + tableName + " ADD COLUMN extra INTEGER");
+            assertUpdate(wapSession, "INSERT INTO " + tableName + " VALUES (3, 'c', 30)", 1);
+            assertThat(query(wapSession, "SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR), CAST(NULL AS INTEGER)), (2, CAST('b' AS VARCHAR), NULL), (3, CAST('c' AS VARCHAR), 30)");
+            assertThat(query("SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR), CAST(NULL AS INTEGER)), (2, CAST('b' AS VARCHAR), NULL)");
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    @Test
+    public void testWapBranchSessionPropertyValues()
+    {
+        String tableName = "test_wap_branch_property_values_" + randomNameSuffix();
+        createWapEnabledTable(tableName);
+        try {
+            assertThat(query(wapSession(""), "SELECT * FROM " + tableName))
+                    .failure()
+                    .hasErrorCode(INVALID_SESSION_PROPERTY)
+                    .hasMessageContaining("wap_branch must not be empty");
+
+            // Like Spark, wap_branch may name main
+            assertUpdate(wapSession(MAIN_BRANCH), "INSERT INTO " + tableName + " VALUES (3, 'c')", 1);
+            assertThat(query("SELECT * FROM " + tableName))
+                    .matches("VALUES (1, CAST('a' AS VARCHAR)), (2, CAST('b' AS VARCHAR)), (3, CAST('c' AS VARCHAR))");
+        }
+        finally {
+            assertUpdate("DROP TABLE " + tableName);
+        }
+    }
+
+    private void createWapEnabledTable(String tableName)
+    {
+        assertUpdate(
+                "CREATE TABLE " + tableName + " WITH (extra_properties = MAP(ARRAY['write.wap.enabled'], ARRAY['true'])) " +
+                        "AS SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS t(id, name)",
+                2);
+    }
+
+    private Session wapSession(String branch)
+    {
+        return Session.builder(getSession())
+                .setCatalogSessionProperty(getSession().getCatalog().orElseThrow(), WAP_BRANCH, branch)
+                .build();
     }
 
     private void createTableWithoutSnapshot(String tableName)

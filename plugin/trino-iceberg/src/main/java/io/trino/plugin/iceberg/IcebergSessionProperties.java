@@ -110,6 +110,7 @@ public final class IcebergSessionProperties
     public static final String BUCKET_EXECUTION_ENABLED = "bucket_execution_enabled";
     private static final String PLAINTEXT_FILES_ALLOWED_FOR_ENCRYPTED_TABLES = "plaintext_files_allowed_for_encrypted_tables";
     private static final String MAX_PARTITIONS_PER_WRITER = "max_partitions_per_writer";
+    public static final String WAP_BRANCH = "wap_branch";
 
     private final List<PropertyMetadata<?>> sessionProperties;
 
@@ -414,6 +415,16 @@ public final class IcebergSessionProperties
                             }
                         },
                         false))
+                .add(stringProperty(
+                        WAP_BRANCH,
+                        "Branch to read and write for tables with write.wap.enabled set to true",
+                        null,
+                        value -> {
+                            if (value.isEmpty()) {
+                                throw new TrinoException(INVALID_SESSION_PROPERTY, format("%s must not be empty", WAP_BRANCH));
+                            }
+                        },
+                        false))
                 .build();
     }
 
@@ -661,6 +672,11 @@ public final class IcebergSessionProperties
     public static int maxPartitionsPerWriter(ConnectorSession session)
     {
         return session.getProperty(MAX_PARTITIONS_PER_WRITER, Integer.class);
+    }
+
+    public static Optional<String> getWapBranch(ConnectorSession session)
+    {
+        return Optional.ofNullable(session.getProperty(WAP_BRANCH, String.class));
     }
 
     public static boolean arePlaintextFilesAllowedForEncryptedTables(ConnectorSession session)

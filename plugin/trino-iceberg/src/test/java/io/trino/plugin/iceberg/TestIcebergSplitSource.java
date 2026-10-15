@@ -672,6 +672,7 @@ public class TestIcebergSplitSource
                 Optional.empty(),
                 ImmutableSet.of(),
                 Optional.of(false),
-                Optional.empty());
+                Optional.empty(),
+                false);
     }
 }

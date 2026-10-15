@@ -2052,6 +2052,106 @@ FROM example.testdb.customer_orders FOR VERSION AS OF 'audit';
 Branches use the current table schema, including later schema changes. Tags use
 the schema of their referenced snapshot. See [](iceberg-time-travel).
 
+(iceberg-write-audit-publish)=
+##### Write-audit-publish
+
+The `wap_branch` catalog session property supports the write-audit-publish
+pattern. When it is set, statements on tables with the `write.wap.enabled`
+table property set to `true` read from and write to the named branch. Existing
+SQL can then stage changes on a branch without modifying `main`. To apply the
+changes to `main`, fast-forward `main` to the branch with
+{doc}`ALTER BRANCH </sql/alter-branch>`.
+
+Set `write.wap.enabled` with the `extra_properties` table property. The catalog
+must allow it with the `iceberg.allowed-extra-properties` configuration
+property:
+
+```properties
+iceberg.allowed-extra-properties=write.wap.enabled
+```
+
+```sql
+ALTER TABLE example.testdb.customer_orders
+SET PROPERTIES extra_properties = MAP(ARRAY['write.wap.enabled'], ARRAY['true']);
+```
+
+The following example writes to the `audit` branch, queries the staged data,
+and then fast-forwards `main` to the branch:
+
+```sql
+SET SESSION example.wap_branch = 'audit';
+
+INSERT INTO example.testdb.customer_orders
+VALUES (1, DATE '2022-01-01', 'a');
+
+SELECT count(*)
+FROM example.testdb.customer_orders
+WHERE status IS NULL;
+
+RESET SESSION example.wap_branch;
+
+ALTER BRANCH main IN TABLE example.testdb.customer_orders FAST FORWARD TO audit;
+DROP BRANCH audit IN TABLE example.testdb.customer_orders;
+```
+
+If the branch does not exist, the first write creates it from the current
+snapshot of `main`. You can also create it in advance with
+{doc}`CREATE BRANCH </sql/create-branch>`.
+
+The following table shows which ref a statement uses when it does not name a
+version or a branch. Writes are `INSERT`, `UPDATE`, `DELETE`, `MERGE`, and
+`TRUNCATE`.
+
+:::{list-table} Write-audit-publish behavior
+:widths: 20, 15, 25, 15, 25
+:header-rows: 1
+
+* - `write.wap.enabled`
+  - `wap_branch`
+  - Ref named by `wap_branch`
+  - Reads
+  - Writes
+* - Not `true`
+  - Any
+  - Any
+  - `main`
+  - `main`
+* - `true`
+  - Not set
+  - Any
+  - `main`
+  - `main`
+* - `true`
+  - Set
+  - Branch
+  - The branch
+  - The branch
+* - `true`
+  - Set
+  - Does not exist
+  - `main`
+  - The branch, created from `main`
+* - `true`
+  - Set
+  - Tag
+  - The tag
+  - Fails
+:::
+
+When `wap_branch` applies to a table, the following rules also apply:
+
+- `FOR VERSION AS OF` and `FOR TIMESTAMP AS OF` read the requested version.
+- Writes that name a branch with `table@branch` fail, even when it is the
+  branch named by `wap_branch`.
+- [](iceberg-alter-table-execute) procedures ignore `wap_branch` and run on
+  `main`. `optimize` fails when `wap_branch` names a tag, and `optimize` with a
+  `WHERE` clause fails when the branch and `main` contain files written with
+  different partition specs.
+- `CREATE OR REPLACE TABLE` fails.
+- Schema changes, table property changes, and branch management statements
+  apply to the table as usual.
+- Metadata tables, such as `$files`, ignore `wap_branch`.
+
 (iceberg-tables)=
 #### Partitioned tables
 

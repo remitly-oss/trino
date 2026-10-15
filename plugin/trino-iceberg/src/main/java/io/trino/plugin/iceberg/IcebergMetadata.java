@@ -262,6 +262,7 @@ import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.collect.Iterables.size;
 import static com.google.common.collect.Maps.transformValues;
 import static com.google.common.collect.Sets.difference;
+import static io.airlift.slice.Slices.utf8Slice;
 import static io.airlift.units.Duration.ZERO;
 import static io.trino.filesystem.Locations.isS3Tables;
 import static io.trino.plugin.base.filter.UtcConstraintExtractor.extractTupleDomain;
@@ -315,10 +316,12 @@ import static io.trino.plugin.iceberg.IcebergMetadataColumn.PARTITION;
 import static io.trino.plugin.iceberg.IcebergMetadataColumn.ROW_ID;
 import static io.trino.plugin.iceberg.IcebergMetadataColumn.isMetadataColumnId;
 import static io.trino.plugin.iceberg.IcebergPartitionFunction.Transform.BUCKET;
+import static io.trino.plugin.iceberg.IcebergSessionProperties.WAP_BRANCH;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getExpireSnapshotMinRetention;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getHiveCatalogName;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getQueryPartitionFilterRequiredSchemas;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getRemoveOrphanFilesMinRetention;
+import static io.trino.plugin.iceberg.IcebergSessionProperties.getWapBranch;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.isBucketExecutionEnabled;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.isCollectExtendedStatisticsOnWrite;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.isIncrementalRefreshEnabled;
@@ -419,6 +422,7 @@ import static io.trino.spi.connector.MaterializedViewFreshness.Freshness.FRESH;
 import static io.trino.spi.connector.MaterializedViewFreshness.Freshness.FRESH_WITHIN_GRACE_PERIOD;
 import static io.trino.spi.connector.MaterializedViewFreshness.Freshness.STALE;
 import static io.trino.spi.connector.MaterializedViewFreshness.Freshness.UNKNOWN;
+import static io.trino.spi.connector.PointerType.TARGET_ID;
 import static io.trino.spi.connector.RetryMode.NO_RETRIES;
 import static io.trino.spi.connector.RowChangeParadigm.DELETE_ROW_AND_INSERT_ROW;
 import static io.trino.spi.predicate.TupleDomain.withColumnDomains;
@@ -468,6 +472,8 @@ import static org.apache.iceberg.TableProperties.OBJECT_STORE_ENABLED;
 import static org.apache.iceberg.TableProperties.ORC_BLOOM_FILTER_COLUMNS;
 import static org.apache.iceberg.TableProperties.PARQUET_BLOOM_FILTER_COLUMN_ENABLED_PREFIX;
 import static org.apache.iceberg.TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES;
+import static org.apache.iceberg.TableProperties.WRITE_AUDIT_PUBLISH_ENABLED;
+import static org.apache.iceberg.TableProperties.WRITE_AUDIT_PUBLISH_ENABLED_DEFAULT;
 import static org.apache.iceberg.TableProperties.WRITE_DATA_LOCATION;
 import static org.apache.iceberg.TableProperties.WRITE_LOCATION_PROVIDER_IMPL;
 import static org.apache.iceberg.TableProperties.WRITE_TARGET_FILE_SIZE_BYTES;
@@ -475,6 +481,7 @@ import static org.apache.iceberg.TableUtil.formatVersion;
 import static org.apache.iceberg.expressions.Expressions.alwaysTrue;
 import static org.apache.iceberg.types.TypeUtil.indexParents;
 import static org.apache.iceberg.util.LocationUtil.stripTrailingSlash;
+import static org.apache.iceberg.util.PropertyUtil.propertyAsBoolean;
 import static org.apache.iceberg.util.PropertyUtil.propertyAsInt;
 import static org.apache.iceberg.util.SnapshotUtil.schemaFor;
 import static org.apache.iceberg.util.SortOrderUtil.findTableSortOrder;
@@ -737,8 +744,13 @@ public class IcebergMetadata
             throw e;
         }
 
-        if (endVersion.isPresent()) {
-            ResolvedVersion resolved = resolveVersion(session, table, endVersion.get());
+        // Like Spark, an existing WAP ref is read as FOR VERSION AS OF '<ref>', and a missing one falls back to main.
+        // Writes resolve their target separately in resolveWriteBranch.
+        Optional<ConnectorTableVersion> version = endVersion.or(() -> findWapBranch(session, table)
+                .filter(table.refs()::containsKey)
+                .map(branch -> new ConnectorTableVersion(TARGET_ID, VARCHAR, utf8Slice(branch))));
+        if (version.isPresent()) {
+            ResolvedVersion resolved = resolveVersion(session, table, version.get());
             // Branches use the current table schema; other versions use the snapshot's schema.
             Schema schema = resolved.branch().isPresent()
                     ? table.schema()
@@ -754,7 +766,8 @@ public class IcebergMetadata
                     resolved.snapshotId(),
                     schema,
                     partitionSpec,
-                    resolved.branch());
+                    resolved.branch(),
+                    endVersion.isEmpty());
         }
         return tableHandleForCurrentSnapshot(session, tableName, table);
     }
@@ -783,7 +796,8 @@ public class IcebergMetadata
                 getCurrentSnapshotId(table),
                 table.schema(),
                 Optional.of(table.spec()),
-                Optional.empty());
+                Optional.empty(),
+                false);
     }
 
     private IcebergTableHandle tableHandleForSnapshot(
@@ -793,7 +807,8 @@ public class IcebergMetadata
             OptionalLong tableSnapshotId,
             Schema tableSchema,
             Optional<PartitionSpec> partitionSpec,
-            Optional<String> branch)
+            Optional<String> branch,
+            boolean selectedByWapBranch)
     {
         validateTableForTrino(table, tableSnapshotId);
         Map<String, String> tableProperties = table.properties();
@@ -818,7 +833,8 @@ public class IcebergMetadata
                 Optional.empty(),
                 ImmutableSet.of(),
                 Optional.of(false),
-                branch);
+                branch,
+                selectedByWapBranch);
     }
 
     private Optional<IcebergTablePartitioning> getTablePartitioning(ConnectorSession session, Table icebergTable)
@@ -1562,6 +1578,9 @@ public class IcebergMetadata
                 IcebergTableHandle table = (IcebergTableHandle) tableHandle;
                 verifyTableVersionForUpdate(table);
                 Table icebergTable = catalog.loadTable(session, table.getSchemaTableName());
+                if (findWapBranch(session, icebergTable).isPresent()) {
+                    throw new TrinoException(NOT_SUPPORTED, "Cannot replace table %s when the %s session property is set".formatted(table.getSchemaTableName(), WAP_BRANCH));
+                }
                 Optional<String> providedTableLocation = getTableLocation(tableMetadata.getProperties());
                 if (providedTableLocation.isPresent() && !stripTrailingSlash(providedTableLocation.get()).equals(icebergTable.location())) {
                     throw new TrinoException(INVALID_TABLE_PROPERTY, format("The provided location '%s' does not match the existing table location '%s'", providedTableLocation.get(), icebergTable.location()));
@@ -1636,6 +1655,10 @@ public class IcebergMetadata
     public Optional<ConnectorTableLayout> getInsertLayout(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
         IcebergTableHandle table = (IcebergTableHandle) tableHandle;
+        if (table.isSelectedByWapBranch()) {
+            // wap_branch can select a tag, whose handle has no partition spec, so check the write target first
+            resolveWriteBranch(session, table, catalog.loadTable(session, table.getSchemaTableName()));
+        }
         Schema schema = SchemaParser.fromJson(table.getTableSchemaJson());
         int specId = table.getSpecId().orElseThrow(() -> new VerifyException("Partition spec missing in the table handle"));
         PartitionSpec partitionSpec = PartitionSpecParser.fromJson(schema, table.getPartitionSpecJsons().get(specId));
@@ -1706,13 +1729,14 @@ public class IcebergMetadata
         IcebergTableHandle table = (IcebergTableHandle) tableHandle;
         BaseTable icebergTable = (BaseTable) catalog.loadTable(session, table.getSchemaTableName());
 
+        Optional<String> branch = resolveWriteBranch(session, table, icebergTable);
         validateNotModifyingOldSnapshot(table, icebergTable);
         validateTableForTrino(icebergTable, getCurrentSnapshotId(icebergTable));
         validateNotEncryptedForWrite(icebergTable);
         validateNoUnknownTypeForWrite(icebergTable);
         setWriteTable(icebergTable);
 
-        return newWritableTableHandle(table.getSchemaTableName(), icebergTable, table.getBranch());
+        return newWritableTableHandle(table.getSchemaTableName(), icebergTable, branch);
     }
 
     private List<String> getChildNamespaces(ConnectorSession session, String parentNamespace)
@@ -1868,10 +1892,15 @@ public class IcebergMetadata
             Map<String, Object> executeProperties,
             RetryMode retryMode)
     {
+        IcebergTableHandle tableHandle = (IcebergTableHandle) connectorTableHandle;
+        if (tableHandle.isSelectedByWapBranch()) {
+            // Like Spark procedures, table procedures ignore wap_branch and run on main
+            tableHandle = tableHandleForCurrentSnapshot(session, tableHandle.getSchemaTableName(), catalog.loadTable(session, tableHandle.getSchemaTableName()));
+        }
         return internalGetTableHandleForExecute(
                 session,
                 accessControl,
-                (IcebergTableHandle) connectorTableHandle,
+                tableHandle,
                 procedureName,
                 executeProperties,
                 false);
@@ -2253,6 +2282,22 @@ public class IcebergMetadata
         };
     }
 
+    private IcebergTableHandle optimizeSourceForMainBranch(IcebergTableHandle table, Table icebergTable)
+    {
+        // OPTIMIZE runs on main like other table procedures, but the engine planned its scan against the snapshot selected by
+        // wap_branch. A branch handle already uses the current schema and partition spec. Whether the filter is enforced
+        // depends on the partition specs of the scanned files, so it must not differ between the two snapshots.
+        if (table.getBranch().isEmpty()) {
+            throw new TrinoException(NOT_SUPPORTED, "Cannot execute OPTIMIZE when the %s session property names a tag".formatted(WAP_BRANCH));
+        }
+        OptionalLong mainSnapshotId = getCurrentSnapshotId(icebergTable);
+        if (!table.getEnforcedPredicate().isAll() &&
+                !getPartitionSpecIdsFromSnapshot(icebergTable, table.getSnapshotId()).equals(getPartitionSpecIdsFromSnapshot(icebergTable, mainSnapshotId))) {
+            throw new TrinoException(NOT_SUPPORTED, "Cannot execute OPTIMIZE with a filter when the %s session property is set and the WAP branch uses different partition specs than main".formatted(WAP_BRANCH));
+        }
+        return table.forMainBranch(mainSnapshotId);
+    }
+
     private BeginTableExecuteResult<ConnectorTableExecuteHandle, ConnectorTableHandle> beginOptimize(
             ConnectorSession session,
             IcebergTableExecuteHandle executeHandle,
@@ -2260,8 +2305,9 @@ public class IcebergMetadata
     {
         IcebergOptimizeHandle optimizeHandle = (IcebergOptimizeHandle) executeHandle.procedureHandle();
         BaseTable icebergTable = catalog.loadTable(session, table.getSchemaTableName());
+        IcebergTableHandle sourceTable = table.isSelectedByWapBranch() ? optimizeSourceForMainBranch(table, icebergTable) : table;
 
-        validateNotModifyingOldSnapshot(table, icebergTable);
+        validateNotModifyingOldSnapshot(sourceTable, icebergTable);
         validateNotEncryptedForWrite(icebergTable);
         validateNoUnknownTypeForWrite(icebergTable);
 
@@ -2270,7 +2316,7 @@ public class IcebergMetadata
 
         return new BeginTableExecuteResult<>(
                 executeHandle,
-                table.forOptimize(true, optimizeHandle.maxScannedFileSize()));
+                sourceTable.forOptimize(true, optimizeHandle.maxScannedFileSize()));
     }
 
     @Override
@@ -3532,6 +3578,10 @@ public class IcebergMetadata
     public Optional<ConnectorPartitioningHandle> getUpdateLayout(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
         IcebergTableHandle table = (IcebergTableHandle) tableHandle;
+        if (table.isSelectedByWapBranch()) {
+            // wap_branch can select a tag, whose handle has no partition spec, so check the write target first
+            resolveWriteBranch(session, table, catalog.loadTable(session, table.getSchemaTableName()));
+        }
         Schema schema = SchemaParser.fromJson(table.getTableSchemaJson());
         int specId = table.getSpecId().orElseThrow(() -> new VerifyException("Partition spec missing in the table handle"));
         PartitionSpec partitionSpec = PartitionSpecParser.fromJson(schema, table.getPartitionSpecJsons().get(specId));
@@ -3548,6 +3598,7 @@ public class IcebergMetadata
         verifyTableVersionForUpdate(table);
 
         BaseTable icebergTable = catalog.loadTable(session, table.getSchemaTableName());
+        Optional<String> branch = resolveWriteBranch(session, table, icebergTable);
         validateNotModifyingOldSnapshot(table, icebergTable);
         validateNotEncryptedForWrite(icebergTable);
         validateNoUnknownTypeForWrite(icebergTable);
@@ -3556,7 +3607,7 @@ public class IcebergMetadata
         IcebergWritableTableHandle insertHandle = newWritableTableHandle(
                 table.getSchemaTableName(),
                 icebergTable,
-                table.getBranch());
+                branch);
         return new IcebergMergeTableHandle(table, insertHandle);
     }
 
@@ -3565,7 +3616,7 @@ public class IcebergMetadata
     {
         IcebergMergeTableHandle mergeHandle = (IcebergMergeTableHandle) mergeTableHandle;
         IcebergTableHandle handle = mergeHandle.getTableHandle();
-        return finishWrite(session, handle, fragments);
+        return finishWrite(session, handle, mergeHandle.getInsertTableHandle().branch(), fragments);
     }
 
     private static void verifyTableVersionForUpdate(IcebergTableHandle table)
@@ -3574,6 +3625,37 @@ public class IcebergMetadata
         if (formatVersion < 2) {
             throw new TrinoException(NOT_SUPPORTED, "Iceberg table updates require at least format version 2");
         }
+    }
+
+    private static Optional<String> findWapBranch(ConnectorSession session, Table icebergTable)
+    {
+        if (!propertyAsBoolean(icebergTable.properties(), WRITE_AUDIT_PUBLISH_ENABLED, parseBoolean(WRITE_AUDIT_PUBLISH_ENABLED_DEFAULT))) {
+            return Optional.empty();
+        }
+        return getWapBranch(session);
+    }
+
+    /**
+     * Matches Spark: when wap_branch applies to the table, writes go to that branch, and the commit creates it from main
+     * if it does not exist. A branch named in the statement cannot be combined with wap_branch.
+     */
+    private static Optional<String> resolveWriteBranch(ConnectorSession session, IcebergTableHandle table, Table icebergTable)
+    {
+        Optional<String> wapBranch = findWapBranch(session, icebergTable);
+        if (wapBranch.isEmpty()) {
+            return table.getBranch();
+        }
+        if (table.getBranch().isPresent() && !table.isSelectedByWapBranch()) {
+            throw new TrinoException(INVALID_ARGUMENTS, "Cannot write to both branch '%s' and WAP branch '%s' of table %s".formatted(
+                    table.getBranch().orElseThrow(),
+                    wapBranch.orElseThrow(),
+                    table.getSchemaTableName()));
+        }
+        SnapshotRef ref = icebergTable.refs().get(wapBranch.orElseThrow());
+        if (ref != null && !ref.isBranch()) {
+            throw new TrinoException(INVALID_ARGUMENTS, "WAP branch '%s' of table %s is a tag, not a branch".formatted(wapBranch.orElseThrow(), table.getSchemaTableName()));
+        }
+        return wapBranch;
     }
 
     private static void validateNotModifyingOldSnapshot(IcebergTableHandle table, Table icebergTable)
@@ -3620,7 +3702,7 @@ public class IcebergMetadata
                 .orElseGet(icebergTable::currentSnapshot);
     }
 
-    private Optional<ConnectorOutputMetadata> finishWrite(ConnectorSession session, IcebergTableHandle table, Collection<Slice> fragments)
+    private Optional<ConnectorOutputMetadata> finishWrite(ConnectorSession session, IcebergTableHandle table, Optional<String> branch, Collection<Slice> fragments)
     {
         if (fragments.isEmpty()) {
             // Avoid recording "empty" write operation
@@ -3631,7 +3713,7 @@ public class IcebergMetadata
         Table icebergTable = transaction.table();
 
         RowDelta rowDelta = transaction.newRowDelta();
-        table.getBranch().ifPresent(rowDelta::toBranch);
+        branch.ifPresent(rowDelta::toBranch);
         OptionalLong baseSnapshotId = table.getSnapshotId();
         if (baseSnapshotId.isPresent()) {
             rowDelta.validateFromSnapshot(icebergTable.snapshot(baseSnapshotId.orElseThrow()).snapshotId());
@@ -3746,7 +3828,7 @@ public class IcebergMetadata
         }
         commitUpdate(rowDelta, session, "write");
         commitWriteTransaction(transaction, "write");
-        return outputMetadata(icebergTable, table.getBranch());
+        return outputMetadata(icebergTable, branch);
     }
 
     /**
@@ -3888,15 +3970,16 @@ public class IcebergMetadata
         IcebergTableHandle handle = (IcebergTableHandle) tableHandle;
 
         Table icebergTable = catalog.loadTable(session, handle.getSchemaTableName());
+        Optional<String> branch = resolveWriteBranch(session, handle, icebergTable);
         validateNoUnknownTypeForWrite(icebergTable);
 
         DeleteFiles deleteFiles = icebergTable.newDelete()
                 .deleteFromRowFilter(toIcebergExpression(handle.getEnforcedPredicate()))
                 .scanManifestsWith(icebergScanExecutor);
-        handle.getBranch().ifPresent(deleteFiles::toBranch);
+        branch.ifPresent(deleteFiles::toBranch);
         commitUpdate(deleteFiles, session, "delete");
 
-        Snapshot snapshot = getLatestSnapshot(icebergTable, handle.getBranch());
+        Snapshot snapshot = getLatestSnapshot(icebergTable, branch);
         Map<String, String> summary = snapshot.summary();
         String deletedRowsStr = summary.get(DELETED_RECORDS_PROP);
         if (deletedRowsStr == null) {
@@ -3914,10 +3997,12 @@ public class IcebergMetadata
     {
         IcebergTableHandle table = checkValidTableHandle(tableHandle);
         Table icebergTable = catalog.loadTable(session, table.getSchemaTableName());
+        Optional<String> branch = resolveWriteBranch(session, table, icebergTable);
         validateNoUnknownTypeForWrite(icebergTable);
         DeleteFiles deleteFiles = icebergTable.newDelete()
                 .deleteFromRowFilter(alwaysTrue())
                 .scanManifestsWith(icebergScanExecutor);
+        branch.ifPresent(deleteFiles::toBranch);
         commitUpdate(deleteFiles, session, "truncate");
     }
 
@@ -3959,7 +4044,8 @@ public class IcebergMetadata
                 table.getMaxScannedFileSize(),
                 table.getConstraintColumns(),
                 table.getForAnalyze(),
-                table.getBranch());
+                table.getBranch(),
+                table.isSelectedByWapBranch());
 
         return Optional.of(new LimitApplicationResult<>(table, false, false));
     }
@@ -4060,7 +4146,8 @@ public class IcebergMetadata
                         table.getMaxScannedFileSize(),
                         newConstraintColumns,
                         table.getForAnalyze(),
-                        table.getBranch()),
+                        table.getBranch(),
+                        table.isSelectedByWapBranch()),
                 remainingConstraint.transformKeys(ColumnHandle.class::cast),
                 extractionResult.remainingExpression(),
                 false));
@@ -4234,7 +4321,8 @@ public class IcebergMetadata
                 originalHandle.getMaxScannedFileSize(),
                 ImmutableSet.of(), // constraintColumns do not affect stats
                 Optional.empty(), // forAnalyze does not affect stats
-                Optional.empty()); // branch does not affect stats
+                Optional.empty(), // branch does not affect stats
+                false); // selectedByWapBranch does not affect stats
         return getIncrementally(
                 tableStatisticsCache,
                 cacheKey,
