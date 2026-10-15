@@ -60,6 +60,7 @@ import static org.apache.iceberg.TableProperties.ORC_BLOOM_FILTER_COLUMNS;
 import static org.apache.iceberg.TableProperties.ORC_BLOOM_FILTER_FPP;
 import static org.apache.iceberg.TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES;
 import static org.apache.iceberg.TableProperties.RESERVED_PROPERTIES;
+import static org.apache.iceberg.TableProperties.WRITE_AUDIT_PUBLISH_ENABLED;
 import static org.apache.iceberg.TableProperties.WRITE_TARGET_FILE_SIZE_BYTES;
 
 public class IcebergTableProperties
@@ -81,6 +82,7 @@ public class IcebergTableProperties
     public static final String OBJECT_STORE_LAYOUT_ENABLED_PROPERTY = "object_store_layout_enabled";
     public static final String DATA_LOCATION_PROPERTY = "data_location";
     public static final String GC_ENABLED_PROPERTY = "gc_enabled";
+    public static final String WAP_ENABLED_PROPERTY = "wap_enabled";
     public static final String EXTRA_PROPERTIES_PROPERTY = "extra_properties";
 
     public static final Set<String> SUPPORTED_PROPERTIES = ImmutableSet.<String>builder()
@@ -98,6 +100,7 @@ public class IcebergTableProperties
             .add(OBJECT_STORE_LAYOUT_ENABLED_PROPERTY)
             .add(DATA_LOCATION_PROPERTY)
             .add(GC_ENABLED_PROPERTY)
+            .add(WAP_ENABLED_PROPERTY)
             .add(EXTRA_PROPERTIES_PROPERTY)
             .add(PARQUET_BLOOM_FILTER_COLUMNS_PROPERTY)
             .add(TARGET_MAX_FILE_SIZE)
@@ -115,6 +118,7 @@ public class IcebergTableProperties
             .add(PARQUET_ROW_GROUP_SIZE_BYTES)
             .add(ENCRYPTION_TABLE_KEY)
             .add(GC_ENABLED)
+            .add(WRITE_AUDIT_PUBLISH_ENABLED)
             .build();
 
     private final List<PropertyMetadata<?>> tableProperties;
@@ -185,6 +189,11 @@ public class IcebergTableProperties
                 .add(booleanProperty(
                         GC_ENABLED_PROPERTY,
                         "Allows garbage collection operations such as expiring snapshots and removing orphan files",
+                        null,
+                        false))
+                .add(booleanProperty(
+                        WAP_ENABLED_PROPERTY,
+                        "Whether statements read from and write to the branch named by the wap_branch session property",
                         null,
                         false))
                 .add(integerProperty(
@@ -414,6 +423,11 @@ public class IcebergTableProperties
     public static Optional<Boolean> getGcEnabled(Map<String, Object> tableProperties)
     {
         return Optional.ofNullable((Boolean) tableProperties.get(GC_ENABLED_PROPERTY));
+    }
+
+    public static Optional<Boolean> getWapEnabled(Map<String, Object> tableProperties)
+    {
+        return Optional.ofNullable((Boolean) tableProperties.get(WAP_ENABLED_PROPERTY));
     }
 
     public static Optional<Map<String, String>> getExtraProperties(Map<String, Object> tableProperties)

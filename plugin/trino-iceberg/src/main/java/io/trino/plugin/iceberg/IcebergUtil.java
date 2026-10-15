@@ -164,10 +164,12 @@ import static io.trino.plugin.iceberg.IcebergTableProperties.PROTECTED_ICEBERG_N
 import static io.trino.plugin.iceberg.IcebergTableProperties.SORTED_BY_PROPERTY;
 import static io.trino.plugin.iceberg.IcebergTableProperties.SUPPORTED_PROPERTIES;
 import static io.trino.plugin.iceberg.IcebergTableProperties.TARGET_MAX_FILE_SIZE;
+import static io.trino.plugin.iceberg.IcebergTableProperties.WAP_ENABLED_PROPERTY;
 import static io.trino.plugin.iceberg.IcebergTableProperties.getGcEnabled;
 import static io.trino.plugin.iceberg.IcebergTableProperties.getMaxPreviousVersions;
 import static io.trino.plugin.iceberg.IcebergTableProperties.getPartitioning;
 import static io.trino.plugin.iceberg.IcebergTableProperties.getSortOrder;
+import static io.trino.plugin.iceberg.IcebergTableProperties.getWapEnabled;
 import static io.trino.plugin.iceberg.IcebergTableProperties.isDeleteAfterCommitEnabled;
 import static io.trino.plugin.iceberg.IcebergTableProperties.validateCompression;
 import static io.trino.plugin.iceberg.PartitionFields.parsePartitionFields;
@@ -231,6 +233,7 @@ import static org.apache.iceberg.TableProperties.ORC_COMPRESSION;
 import static org.apache.iceberg.TableProperties.PARQUET_BLOOM_FILTER_COLUMN_ENABLED_PREFIX;
 import static org.apache.iceberg.TableProperties.PARQUET_COMPRESSION;
 import static org.apache.iceberg.TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES;
+import static org.apache.iceberg.TableProperties.WRITE_AUDIT_PUBLISH_ENABLED;
 import static org.apache.iceberg.TableProperties.WRITE_DATA_LOCATION;
 import static org.apache.iceberg.TableProperties.WRITE_LOCATION_PROVIDER_IMPL;
 import static org.apache.iceberg.TableProperties.WRITE_TARGET_FILE_SIZE_BYTES;
@@ -396,6 +399,11 @@ public final class IcebergUtil
         if (icebergTable.properties().containsKey(GC_ENABLED)) {
             boolean gcEnabled = parseBoolean(icebergTable.properties().get(GC_ENABLED));
             properties.put(GC_ENABLED_PROPERTY, gcEnabled);
+        }
+
+        if (icebergTable.properties().containsKey(WRITE_AUDIT_PUBLISH_ENABLED)) {
+            boolean wapEnabled = parseBoolean(icebergTable.properties().get(WRITE_AUDIT_PUBLISH_ENABLED));
+            properties.put(WAP_ENABLED_PROPERTY, wapEnabled);
         }
 
         if (icebergTable.properties().containsKey(METADATA_PREVIOUS_VERSIONS_MAX)) {
@@ -1017,6 +1025,8 @@ public final class IcebergUtil
                 .ifPresent(value -> propertiesBuilder.put(METADATA_DELETE_AFTER_COMMIT_ENABLED, Boolean.toString(value)));
         getGcEnabled(tableMetadata.getProperties())
                 .ifPresent(value -> propertiesBuilder.put(GC_ENABLED, Boolean.toString(value)));
+        getWapEnabled(tableMetadata.getProperties())
+                .ifPresent(value -> propertiesBuilder.put(WRITE_AUDIT_PUBLISH_ENABLED, Boolean.toString(value)));
         getMaxPreviousVersions(tableMetadata.getProperties())
                 .ifPresent(value -> propertiesBuilder.put(METADATA_PREVIOUS_VERSIONS_MAX, Integer.toString(value)));
 
