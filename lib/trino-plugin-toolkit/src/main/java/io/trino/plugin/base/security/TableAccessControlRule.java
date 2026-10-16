@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.plugin.base.security.TableAccessControlRule.TablePrivilege.GRANT_SELECT;
@@ -50,11 +49,11 @@ public class TableAccessControlRule
     private final Set<String> restrictedColumns;
     private final Optional<String> filter;
     private final Optional<ExpressionEnvironment> filterEnvironment;
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
-    private final Optional<Pattern> groupRegex;
-    private final Optional<Pattern> schemaRegex;
-    private final Optional<Pattern> tableRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
+    private final Optional<StringMatcher> groupRegex;
+    private final Optional<StringMatcher> schemaRegex;
+    private final Optional<StringMatcher> tableRegex;
 
     @JsonCreator
     public TableAccessControlRule(
@@ -62,11 +61,11 @@ public class TableAccessControlRule
             @JsonProperty("columns") Optional<List<ColumnConstraint>> columns,
             @JsonProperty("filter") Optional<String> filter,
             @JsonProperty("filter_environment") Optional<ExpressionEnvironment> filterEnvironment,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("schema") Optional<Pattern> schemaRegex,
-            @JsonProperty("table") Optional<Pattern> tableRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("schema") Optional<StringMatcher> schemaRegex,
+            @JsonProperty("table") Optional<StringMatcher> tableRegex)
     {
         this.privileges = ImmutableSet.copyOf(requireNonNull(privileges, "privileges is null"));
         this.columnConstraints = Maps.uniqueIndex(columns.orElse(ImmutableList.of()), ColumnConstraint::getName);
@@ -85,11 +84,11 @@ public class TableAccessControlRule
 
     public boolean matches(String user, Set<String> roles, Set<String> groups, SchemaTableName table)
     {
-        return userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true) &&
-                groupRegex.map(regex -> groups.stream().anyMatch(group -> regex.matcher(group).matches())).orElse(true) &&
-                schemaRegex.map(regex -> regex.matcher(table.getSchemaName()).matches()).orElse(true) &&
-                tableRegex.map(regex -> regex.matcher(table.getTableName()).matches()).orElse(true);
+        return userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true) &&
+                groupRegex.map(regex -> regex.matchesAny(groups)).orElse(true) &&
+                schemaRegex.map(regex -> regex.matches(table.getSchemaName())).orElse(true) &&
+                tableRegex.map(regex -> regex.matches(table.getTableName())).orElse(true);
     }
 
     public Set<String> getRestrictedColumns()
@@ -135,22 +134,22 @@ public class TableAccessControlRule
         return privileges;
     }
 
-    Optional<Pattern> getUserRegex()
+    Optional<StringMatcher> getUserRegex()
     {
         return userRegex;
     }
 
-    public Optional<Pattern> getRoleRegex()
+    public Optional<StringMatcher> getRoleRegex()
     {
         return roleRegex;
     }
 
-    Optional<Pattern> getGroupRegex()
+    Optional<StringMatcher> getGroupRegex()
     {
         return groupRegex;
     }
 
-    Optional<Pattern> getSchemaRegex()
+    Optional<StringMatcher> getSchemaRegex()
     {
         return schemaRegex;
     }

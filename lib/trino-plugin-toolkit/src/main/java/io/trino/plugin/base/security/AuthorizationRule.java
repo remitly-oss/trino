@@ -20,7 +20,6 @@ import io.trino.spi.security.TrinoPrincipal;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.lang.Boolean.TRUE;
@@ -29,20 +28,20 @@ import static java.util.Objects.requireNonNullElse;
 
 public class AuthorizationRule
 {
-    private final Optional<Pattern> originalUserPattern;
-    private final Optional<Pattern> originalGroupPattern;
-    private final Optional<Pattern> originalRolePattern;
-    private final Optional<Pattern> newUserPattern;
-    private final Optional<Pattern> newRolePattern;
+    private final Optional<StringMatcher> originalUserPattern;
+    private final Optional<StringMatcher> originalGroupPattern;
+    private final Optional<StringMatcher> originalRolePattern;
+    private final Optional<StringMatcher> newUserPattern;
+    private final Optional<StringMatcher> newRolePattern;
     private final boolean allow;
 
     @JsonCreator
     public AuthorizationRule(
-            @JsonProperty("original_user") @JsonAlias("originalUser") Optional<Pattern> originalUserPattern,
-            @JsonProperty("original_group") @JsonAlias("originalGroup") Optional<Pattern> originalGroupPattern,
-            @JsonProperty("original_role") @JsonAlias("originalRole") Optional<Pattern> originalRolePattern,
-            @JsonProperty("new_user") @JsonAlias("newUser") Optional<Pattern> newUserPattern,
-            @JsonProperty("new_role") @JsonAlias("newRole") Optional<Pattern> newRolePattern,
+            @JsonProperty("original_user") @JsonAlias("originalUser") Optional<StringMatcher> originalUserPattern,
+            @JsonProperty("original_group") @JsonAlias("originalGroup") Optional<StringMatcher> originalGroupPattern,
+            @JsonProperty("original_role") @JsonAlias("originalRole") Optional<StringMatcher> originalRolePattern,
+            @JsonProperty("new_user") @JsonAlias("newUser") Optional<StringMatcher> newUserPattern,
+            @JsonProperty("new_role") @JsonAlias("newRole") Optional<StringMatcher> newRolePattern,
             @JsonProperty("allow") Boolean allow)
     {
         checkArgument(newUserPattern.isPresent() || newRolePattern.isPresent(), "At least one of new_use or new_role is required, none were provided");
@@ -56,9 +55,9 @@ public class AuthorizationRule
 
     public Optional<Boolean> match(String user, Set<String> groups, Set<String> roles, TrinoPrincipal newPrincipal)
     {
-        if (originalUserPattern.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                (originalGroupPattern.isEmpty() || groups.stream().anyMatch(group -> originalGroupPattern.get().matcher(group).matches())) &&
-                (originalRolePattern.isEmpty() || roles.stream().anyMatch(role -> originalRolePattern.get().matcher(role).matches())) &&
+        if (originalUserPattern.map(regex -> regex.matches(user)).orElse(true) &&
+                (originalGroupPattern.isEmpty() || originalGroupPattern.get().matchesAny(groups)) &&
+                (originalRolePattern.isEmpty() || originalRolePattern.get().matchesAny(roles)) &&
                 matches(newPrincipal)) {
             return Optional.of(allow);
         }
@@ -68,17 +67,17 @@ public class AuthorizationRule
     private boolean matches(TrinoPrincipal newPrincipal)
     {
         return switch (newPrincipal.getType()) {
-            case USER -> newUserPattern.map(regex -> regex.matcher(newPrincipal.getName()).matches()).orElse(false);
-            case ROLE -> newRolePattern.map(regex -> regex.matcher(newPrincipal.getName()).matches()).orElse(false);
+            case USER -> newUserPattern.map(regex -> regex.matches(newPrincipal.getName())).orElse(false);
+            case ROLE -> newRolePattern.map(regex -> regex.matches(newPrincipal.getName())).orElse(false);
         };
     }
 
-    public Optional<Pattern> getOriginalRolePattern()
+    public Optional<StringMatcher> getOriginalRolePattern()
     {
         return originalRolePattern;
     }
 
-    public Optional<Pattern> getNewRolePattern()
+    public Optional<StringMatcher> getNewRolePattern()
     {
         return newRolePattern;
     }

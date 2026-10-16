@@ -19,7 +19,6 @@ import io.trino.spi.connector.CatalogSchemaName;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -28,22 +27,22 @@ public class CatalogSchemaAccessControlRule
     public static final CatalogSchemaAccessControlRule ALLOW_ALL = new CatalogSchemaAccessControlRule(SchemaAccessControlRule.ALLOW_ALL, Optional.empty());
 
     private final SchemaAccessControlRule schemaAccessControlRule;
-    private final Optional<Pattern> catalogRegex;
+    private final Optional<StringMatcher> catalogRegex;
 
     @JsonCreator
     public CatalogSchemaAccessControlRule(
             @JsonProperty("owner") boolean owner,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("schema") Optional<Pattern> schemaRegex,
-            @JsonProperty("catalog") Optional<Pattern> catalogRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("schema") Optional<StringMatcher> schemaRegex,
+            @JsonProperty("catalog") Optional<StringMatcher> catalogRegex)
     {
         this.schemaAccessControlRule = new SchemaAccessControlRule(owner, userRegex, roleRegex, groupRegex, schemaRegex);
         this.catalogRegex = requireNonNull(catalogRegex, "catalogRegex is null");
     }
 
-    private CatalogSchemaAccessControlRule(SchemaAccessControlRule schemaAccessControlRule, Optional<Pattern> catalogRegex)
+    private CatalogSchemaAccessControlRule(SchemaAccessControlRule schemaAccessControlRule, Optional<StringMatcher> catalogRegex)
     {
         this.schemaAccessControlRule = schemaAccessControlRule;
         this.catalogRegex = catalogRegex;
@@ -51,7 +50,7 @@ public class CatalogSchemaAccessControlRule
 
     public Optional<Boolean> match(String user, Set<String> roles, Set<String> groups, CatalogSchemaName schema)
     {
-        if (!catalogRegex.map(regex -> regex.matcher(schema.getCatalogName()).matches()).orElse(true)) {
+        if (!catalogRegex.map(regex -> regex.matches(schema.getCatalogName())).orElse(true)) {
             return Optional.empty();
         }
         return schemaAccessControlRule.match(user, roles, groups, schema.getSchemaName());

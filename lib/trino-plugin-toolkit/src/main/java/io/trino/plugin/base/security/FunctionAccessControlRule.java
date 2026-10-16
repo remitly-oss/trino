@@ -22,7 +22,6 @@ import io.trino.spi.function.FunctionKind;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.FunctionAccessControlRule.FunctionPrivilege.EXECUTE;
 import static io.trino.plugin.base.security.FunctionAccessControlRule.FunctionPrivilege.GRANT_EXECUTE;
@@ -32,20 +31,20 @@ import static java.util.Objects.requireNonNull;
 public class FunctionAccessControlRule
 {
     private final Set<FunctionPrivilege> privileges;
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
-    private final Optional<Pattern> groupRegex;
-    private final Optional<Pattern> schemaRegex;
-    private final Optional<Pattern> functionRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
+    private final Optional<StringMatcher> groupRegex;
+    private final Optional<StringMatcher> schemaRegex;
+    private final Optional<StringMatcher> functionRegex;
 
     @JsonCreator
     public FunctionAccessControlRule(
             @JsonProperty("privileges") Set<FunctionPrivilege> privileges,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("schema") Optional<Pattern> schemaRegex,
-            @JsonProperty("function") Optional<Pattern> functionRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("schema") Optional<StringMatcher> schemaRegex,
+            @JsonProperty("function") Optional<StringMatcher> functionRegex,
             @JsonProperty("function_kinds") @JsonAlias("functionKinds") Set<FunctionKind> functionKinds)
     {
         this.privileges = ImmutableSet.copyOf(requireNonNull(privileges, "privileges is null"));
@@ -61,11 +60,11 @@ public class FunctionAccessControlRule
 
     public boolean matches(String user, Set<String> roles, Set<String> groups, SchemaRoutineName functionName)
     {
-        return userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true) &&
-                groupRegex.map(regex -> groups.stream().anyMatch(group -> regex.matcher(group).matches())).orElse(true) &&
-                schemaRegex.map(regex -> regex.matcher(functionName.getSchemaName()).matches()).orElse(true) &&
-                functionRegex.map(regex -> regex.matcher(functionName.getRoutineName()).matches()).orElse(true);
+        return userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true) &&
+                groupRegex.map(regex -> regex.matchesAny(groups)).orElse(true) &&
+                schemaRegex.map(regex -> regex.matches(functionName.getSchemaName())).orElse(true) &&
+                functionRegex.map(regex -> regex.matches(functionName.getRoutineName())).orElse(true);
     }
 
     public boolean canExecuteFunction()
@@ -96,22 +95,22 @@ public class FunctionAccessControlRule
         return privileges;
     }
 
-    Optional<Pattern> getUserRegex()
+    Optional<StringMatcher> getUserRegex()
     {
         return userRegex;
     }
 
-    Optional<Pattern> getRoleRegex()
+    Optional<StringMatcher> getRoleRegex()
     {
         return roleRegex;
     }
 
-    Optional<Pattern> getGroupRegex()
+    Optional<StringMatcher> getGroupRegex()
     {
         return groupRegex;
     }
 
-    Optional<Pattern> getSchemaRegex()
+    Optional<StringMatcher> getSchemaRegex()
     {
         return schemaRegex;
     }
