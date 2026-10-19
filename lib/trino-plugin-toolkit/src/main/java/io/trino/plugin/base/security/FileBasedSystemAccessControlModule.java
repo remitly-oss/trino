@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 
 import static com.google.common.base.Suppliers.memoizeWithExpiration;
 import static io.airlift.configuration.ConfigBinder.configBinder;
@@ -90,10 +89,10 @@ public class FileBasedSystemAccessControlModule
             // todo Change userRegex from ".*" to one particular user that Trino Admin will be restricted to run as
             catalogRulesBuilder.add(new CatalogAccessControlRule(
                     ALL,
-                    Optional.of(Pattern.compile(".*")),
+                    Optional.of(StringMatcher.of(".*")),
                     Optional.empty(),
                     Optional.empty(),
-                    Optional.of(Pattern.compile("system"))));
+                    Optional.of(StringMatcher.of("system"))));
             catalogAccessControlRules = catalogRulesBuilder.build();
         }
         else {

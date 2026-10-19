@@ -18,7 +18,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -32,17 +31,17 @@ public class CatalogSessionPropertyAccessControlRule
             Optional.empty(),
             Optional.empty());
 
-    private final Optional<Pattern> catalogRegex;
+    private final Optional<StringMatcher> catalogRegex;
     private final SessionPropertyAccessControlRule sessionPropertyAccessControlRule;
 
     @JsonCreator
     public CatalogSessionPropertyAccessControlRule(
             @JsonProperty("allow") boolean allow,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("property") Optional<Pattern> propertyRegex,
-            @JsonProperty("catalog") Optional<Pattern> catalogRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("property") Optional<StringMatcher> propertyRegex,
+            @JsonProperty("catalog") Optional<StringMatcher> catalogRegex)
     {
         this.sessionPropertyAccessControlRule = new SessionPropertyAccessControlRule(allow, userRegex, roleRegex, groupRegex, propertyRegex);
         this.catalogRegex = requireNonNull(catalogRegex, "catalogRegex is null");
@@ -50,7 +49,7 @@ public class CatalogSessionPropertyAccessControlRule
 
     public Optional<Boolean> match(String user, Set<String> roles, Set<String> groups, String catalog, String property)
     {
-        if (!catalogRegex.map(regex -> regex.matcher(catalog).matches()).orElse(true)) {
+        if (!catalogRegex.map(regex -> regex.matches(catalog)).orElse(true)) {
             return Optional.empty();
         }
         return sessionPropertyAccessControlRule.match(user, roles, groups, property);

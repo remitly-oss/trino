@@ -20,7 +20,6 @@ import io.trino.spi.connector.SchemaRoutineName;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.ProcedureAccessControlRule.ProcedurePrivilege.EXECUTE;
 import static io.trino.plugin.base.security.ProcedureAccessControlRule.ProcedurePrivilege.GRANT_EXECUTE;
@@ -29,20 +28,20 @@ import static java.util.Objects.requireNonNull;
 public class ProcedureAccessControlRule
 {
     private final Set<ProcedurePrivilege> privileges;
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
-    private final Optional<Pattern> groupRegex;
-    private final Optional<Pattern> schemaRegex;
-    private final Optional<Pattern> procedureRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
+    private final Optional<StringMatcher> groupRegex;
+    private final Optional<StringMatcher> schemaRegex;
+    private final Optional<StringMatcher> procedureRegex;
 
     @JsonCreator
     public ProcedureAccessControlRule(
             @JsonProperty("privileges") Set<ProcedurePrivilege> privileges,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("schema") Optional<Pattern> schemaRegex,
-            @JsonProperty("procedure") Optional<Pattern> procedureRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("schema") Optional<StringMatcher> schemaRegex,
+            @JsonProperty("procedure") Optional<StringMatcher> procedureRegex)
     {
         this.privileges = ImmutableSet.copyOf(requireNonNull(privileges, "privileges is null"));
         this.userRegex = requireNonNull(userRegex, "userRegex is null");
@@ -54,11 +53,11 @@ public class ProcedureAccessControlRule
 
     public boolean matches(String user, Set<String> roles, Set<String> groups, SchemaRoutineName procedureName)
     {
-        return userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true) &&
-                groupRegex.map(regex -> groups.stream().anyMatch(group -> regex.matcher(group).matches())).orElse(true) &&
-                schemaRegex.map(regex -> regex.matcher(procedureName.getSchemaName()).matches()).orElse(true) &&
-                procedureRegex.map(regex -> regex.matcher(procedureName.getRoutineName()).matches()).orElse(true);
+        return userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true) &&
+                groupRegex.map(regex -> regex.matchesAny(groups)).orElse(true) &&
+                schemaRegex.map(regex -> regex.matches(procedureName.getSchemaName())).orElse(true) &&
+                procedureRegex.map(regex -> regex.matches(procedureName.getRoutineName())).orElse(true);
     }
 
     public boolean canExecuteProcedure()
@@ -84,22 +83,22 @@ public class ProcedureAccessControlRule
         return privileges;
     }
 
-    Optional<Pattern> getUserRegex()
+    Optional<StringMatcher> getUserRegex()
     {
         return userRegex;
     }
 
-    Optional<Pattern> getRoleRegex()
+    Optional<StringMatcher> getRoleRegex()
     {
         return roleRegex;
     }
 
-    Optional<Pattern> getGroupRegex()
+    Optional<StringMatcher> getGroupRegex()
     {
         return groupRegex;
     }
 
-    Optional<Pattern> getSchemaRegex()
+    Optional<StringMatcher> getSchemaRegex()
     {
         return schemaRegex;
     }

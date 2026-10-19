@@ -16,16 +16,15 @@ package io.trino.plugin.base.security;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 public class AnyCatalogPermissionsRule
 {
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
-    private final Optional<Pattern> groupRegex;
-    private final Optional<Pattern> catalogRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
+    private final Optional<StringMatcher> groupRegex;
+    private final Optional<StringMatcher> catalogRegex;
 
-    public AnyCatalogPermissionsRule(Optional<Pattern> userRegex, Optional<Pattern> roleRegex, Optional<Pattern> groupRegex, Optional<Pattern> catalogRegex)
+    public AnyCatalogPermissionsRule(Optional<StringMatcher> userRegex, Optional<StringMatcher> roleRegex, Optional<StringMatcher> groupRegex, Optional<StringMatcher> catalogRegex)
     {
         this.userRegex = userRegex;
         this.roleRegex = roleRegex;
@@ -35,10 +34,10 @@ public class AnyCatalogPermissionsRule
 
     public boolean match(String user, Set<String> roles, Set<String> groups, String catalog)
     {
-        return userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true) &&
-                groupRegex.map(regex -> groups.stream().anyMatch(group -> regex.matcher(group).matches())).orElse(true) &&
-                catalogRegex.map(regex -> regex.matcher(catalog).matches()).orElse(true);
+        return userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true) &&
+                groupRegex.map(regex -> regex.matchesAny(groups)).orElse(true) &&
+                catalogRegex.map(regex -> regex.matches(catalog)).orElse(true);
     }
 
     @Override
@@ -57,14 +56,14 @@ public class AnyCatalogPermissionsRule
                 patternEquals(catalogRegex, that.catalogRegex);
     }
 
-    private static boolean patternEquals(Optional<Pattern> left, Optional<Pattern> right)
+    private static boolean patternEquals(Optional<StringMatcher> left, Optional<StringMatcher> right)
     {
         if (left.isEmpty() || right.isEmpty()) {
             return left.isEmpty() == right.isEmpty();
         }
-        Pattern leftPattern = left.get();
-        Pattern rightPattern = right.get();
-        return leftPattern.pattern().equals(rightPattern.pattern()) && leftPattern.flags() == rightPattern.flags();
+        StringMatcher leftPattern = left.get();
+        StringMatcher rightPattern = right.get();
+        return leftPattern.equals(rightPattern);
     }
 
     @Override

@@ -22,7 +22,6 @@ import io.trino.spi.security.ViewExpression;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -31,7 +30,7 @@ public class CatalogTableAccessControlRule
     public static final CatalogTableAccessControlRule ALLOW_ALL = new CatalogTableAccessControlRule(TableAccessControlRule.ALLOW_ALL, Optional.empty());
 
     private final TableAccessControlRule tableAccessControlRule;
-    private final Optional<Pattern> catalogRegex;
+    private final Optional<StringMatcher> catalogRegex;
 
     @JsonCreator
     public CatalogTableAccessControlRule(
@@ -39,18 +38,18 @@ public class CatalogTableAccessControlRule
             @JsonProperty("columns") Optional<List<ColumnConstraint>> columns,
             @JsonProperty("filter") Optional<String> filter,
             @JsonProperty("filter_environment") Optional<ExpressionEnvironment> filterEnvironment,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("schema") Optional<Pattern> schemaRegex,
-            @JsonProperty("table") Optional<Pattern> tableRegex,
-            @JsonProperty("catalog") Optional<Pattern> catalogRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("schema") Optional<StringMatcher> schemaRegex,
+            @JsonProperty("table") Optional<StringMatcher> tableRegex,
+            @JsonProperty("catalog") Optional<StringMatcher> catalogRegex)
     {
         this.tableAccessControlRule = new TableAccessControlRule(privileges, columns, filter, filterEnvironment, userRegex, roleRegex, groupRegex, schemaRegex, tableRegex);
         this.catalogRegex = requireNonNull(catalogRegex, "catalogRegex is null");
     }
 
-    public CatalogTableAccessControlRule(TableAccessControlRule tableAccessControlRule, Optional<Pattern> catalogRegex)
+    public CatalogTableAccessControlRule(TableAccessControlRule tableAccessControlRule, Optional<StringMatcher> catalogRegex)
     {
         this.tableAccessControlRule = tableAccessControlRule;
         this.catalogRegex = catalogRegex;
@@ -58,7 +57,7 @@ public class CatalogTableAccessControlRule
 
     public boolean matches(String user, Set<String> roles, Set<String> groups, CatalogSchemaTableName table)
     {
-        if (!catalogRegex.map(regex -> regex.matcher(table.getCatalogName()).matches()).orElse(true)) {
+        if (!catalogRegex.map(regex -> regex.matches(table.getCatalogName())).orElse(true)) {
             return false;
         }
         return tableAccessControlRule.matches(user, roles, groups, table.getSchemaTableName());

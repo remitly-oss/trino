@@ -21,7 +21,6 @@ import io.trino.spi.connector.CatalogSchemaRoutineName;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.ProcedureAccessControlRule.ProcedurePrivilege.EXECUTE;
 import static io.trino.plugin.base.security.ProcedureAccessControlRule.ProcedurePrivilege.GRANT_EXECUTE;
@@ -34,27 +33,27 @@ public class CatalogProcedureAccessControlRule
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
-            Optional.of(Pattern.compile("system")),
-            Optional.of(Pattern.compile("builtin")),
+            Optional.of(StringMatcher.of("system")),
+            Optional.of(StringMatcher.of("builtin")),
             Optional.empty());
 
-    private final Optional<Pattern> catalogRegex;
+    private final Optional<StringMatcher> catalogRegex;
     private final ProcedureAccessControlRule procedureAccessControlRule;
 
     @JsonCreator
     public CatalogProcedureAccessControlRule(
             @JsonProperty("privileges") Set<ProcedurePrivilege> privileges,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("catalog") Optional<Pattern> catalogRegex,
-            @JsonProperty("schema") Optional<Pattern> schemaRegex,
-            @JsonProperty("procedure") Optional<Pattern> procedureRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("catalog") Optional<StringMatcher> catalogRegex,
+            @JsonProperty("schema") Optional<StringMatcher> schemaRegex,
+            @JsonProperty("procedure") Optional<StringMatcher> procedureRegex)
     {
         this(catalogRegex, new ProcedureAccessControlRule(privileges, userRegex, roleRegex, groupRegex, schemaRegex, procedureRegex));
     }
 
-    private CatalogProcedureAccessControlRule(Optional<Pattern> catalogRegex, ProcedureAccessControlRule procedureAccessControlRule)
+    private CatalogProcedureAccessControlRule(Optional<StringMatcher> catalogRegex, ProcedureAccessControlRule procedureAccessControlRule)
     {
         this.catalogRegex = requireNonNull(catalogRegex, "catalogRegex is null");
         this.procedureAccessControlRule = requireNonNull(procedureAccessControlRule, "procedureAccessControlRule is null");
@@ -62,7 +61,7 @@ public class CatalogProcedureAccessControlRule
 
     public boolean matches(String user, Set<String> roles, Set<String> groups, CatalogSchemaRoutineName procedureName)
     {
-        if (!catalogRegex.map(regex -> regex.matcher(procedureName.getCatalogName()).matches()).orElse(true)) {
+        if (!catalogRegex.map(regex -> regex.matches(procedureName.getCatalogName())).orElse(true)) {
             return false;
         }
         return procedureAccessControlRule.matches(user, roles, groups, procedureName.getSchemaRoutineName());

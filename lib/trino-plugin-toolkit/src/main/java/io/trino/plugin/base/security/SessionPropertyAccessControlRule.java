@@ -18,7 +18,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -32,18 +31,18 @@ public class SessionPropertyAccessControlRule
             Optional.empty());
 
     private final boolean allow;
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
-    private final Optional<Pattern> groupRegex;
-    private final Optional<Pattern> propertyRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
+    private final Optional<StringMatcher> groupRegex;
+    private final Optional<StringMatcher> propertyRegex;
 
     @JsonCreator
     public SessionPropertyAccessControlRule(
             @JsonProperty("allow") boolean allow,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("property") Optional<Pattern> propertyRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("property") Optional<StringMatcher> propertyRegex)
     {
         this.allow = allow;
         this.userRegex = requireNonNull(userRegex, "userRegex is null");
@@ -57,27 +56,27 @@ public class SessionPropertyAccessControlRule
         return allow;
     }
 
-    Optional<Pattern> getUserRegex()
+    Optional<StringMatcher> getUserRegex()
     {
         return userRegex;
     }
 
-    public Optional<Pattern> getRoleRegex()
+    public Optional<StringMatcher> getRoleRegex()
     {
         return roleRegex;
     }
 
-    Optional<Pattern> getGroupRegex()
+    Optional<StringMatcher> getGroupRegex()
     {
         return groupRegex;
     }
 
     public Optional<Boolean> match(String user, Set<String> roles, Set<String> groups, String property)
     {
-        if (userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true) &&
-                groupRegex.map(regex -> groups.stream().anyMatch(group -> regex.matcher(group).matches())).orElse(true) &&
-                propertyRegex.map(regex -> regex.matcher(property).matches()).orElse(true)) {
+        if (userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true) &&
+                groupRegex.map(regex -> regex.matchesAny(groups)).orElse(true) &&
+                propertyRegex.map(regex -> regex.matches(property)).orElse(true)) {
             return Optional.of(allow);
         }
         return Optional.empty();
