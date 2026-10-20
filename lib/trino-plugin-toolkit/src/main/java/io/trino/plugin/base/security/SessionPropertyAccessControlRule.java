@@ -18,7 +18,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -33,15 +32,15 @@ public class SessionPropertyAccessControlRule
 
     private final boolean allow;
     private final IdentityMatcher identityMatcher;
-    private final Optional<Pattern> propertyRegex;
+    private final Optional<StringMatcher> propertyRegex;
 
     @JsonCreator
     public SessionPropertyAccessControlRule(
             @JsonProperty("allow") boolean allow,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("property") Optional<Pattern> propertyRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("property") Optional<StringMatcher> propertyRegex)
     {
         this.allow = allow;
         this.identityMatcher = new IdentityMatcher(userRegex, roleRegex, groupRegex);
@@ -61,7 +60,7 @@ public class SessionPropertyAccessControlRule
     public Optional<Boolean> match(String user, Set<String> roles, Set<String> groups, String property)
     {
         if (identityMatcher.matches(user, roles, groups) &&
-                propertyRegex.map(regex -> regex.matcher(property).matches()).orElse(true)) {
+                propertyRegex.map(regex -> regex.matches(property)).orElse(true)) {
             return Optional.of(allow);
         }
         return Optional.empty();

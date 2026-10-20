@@ -18,7 +18,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -38,10 +37,10 @@ public class CatalogSessionPropertyAccessControlRule
     @JsonCreator
     public CatalogSessionPropertyAccessControlRule(
             @JsonProperty("allow") boolean allow,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("property") Optional<Pattern> propertyRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("property") Optional<StringMatcher> propertyRegex,
             @JsonProperty("catalog") Optional<UserSubstitutingPattern> catalogPattern)
     {
         this.sessionPropertyAccessControlRule = new SessionPropertyAccessControlRule(allow, userRegex, roleRegex, groupRegex, propertyRegex);

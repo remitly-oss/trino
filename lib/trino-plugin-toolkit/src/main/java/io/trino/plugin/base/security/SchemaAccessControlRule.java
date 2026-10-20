@@ -18,7 +18,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -38,9 +37,9 @@ public class SchemaAccessControlRule
     @JsonCreator
     public SchemaAccessControlRule(
             @JsonProperty("owner") boolean owner,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
             @JsonProperty("schema") Optional<UserSubstitutingPattern> schemaPattern)
     {
         this.owner = owner;

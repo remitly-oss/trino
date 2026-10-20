@@ -23,7 +23,6 @@ import io.trino.spi.function.FunctionKind;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.FunctionAccessControlRule.FunctionPrivilege.EXECUTE;
 import static io.trino.plugin.base.security.FunctionAccessControlRule.FunctionPrivilege.GRANT_EXECUTE;
@@ -47,12 +46,12 @@ public class CatalogFunctionAccessControlRule
     @JsonCreator
     public CatalogFunctionAccessControlRule(
             @JsonProperty("privileges") Set<FunctionPrivilege> privileges,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
             @JsonProperty("catalog") Optional<UserSubstitutingPattern> catalogPattern,
             @JsonProperty("schema") Optional<UserSubstitutingPattern> schemaPattern,
-            @JsonProperty("function") Optional<Pattern> tableFunctionRegex,
+            @JsonProperty("function") Optional<StringMatcher> tableFunctionRegex,
             @JsonProperty("function_kinds") @JsonAlias("functionKinds") Set<FunctionKind> functionKinds)
     {
         this(catalogPattern, new FunctionAccessControlRule(privileges, userRegex, roleRegex, groupRegex, schemaPattern, tableFunctionRegex, functionKinds));

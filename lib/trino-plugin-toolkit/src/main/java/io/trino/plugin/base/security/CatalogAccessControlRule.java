@@ -23,7 +23,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.CatalogAccessControlRule.AccessMode.ALL;
 import static java.util.Objects.requireNonNull;
@@ -44,9 +43,9 @@ public class CatalogAccessControlRule
     @JsonCreator
     public CatalogAccessControlRule(
             @JsonProperty("allow") AccessMode accessMode,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
             @JsonProperty("catalog") Optional<UserSubstitutingPattern> catalogPattern)
     {
         this.accessMode = requireNonNull(accessMode, "accessMode is null");
