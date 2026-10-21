@@ -22,7 +22,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkState;
@@ -35,15 +34,15 @@ public class QueryAccessRule
 {
     private final Set<AccessMode> allow;
     private final IdentityMatcher identityMatcher;
-    private final Optional<Pattern> queryOwnerRegex;
+    private final Optional<StringMatcher> queryOwnerRegex;
 
     @JsonCreator
     public QueryAccessRule(
             @JsonProperty("allow") Set<AccessMode> allow,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
-            @JsonProperty("queryOwner") Optional<Pattern> queryOwnerRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
+            @JsonProperty("queryOwner") Optional<StringMatcher> queryOwnerRegex)
     {
         this.allow = ImmutableSet.copyOf(requireNonNull(allow, "allow is null"));
         this.identityMatcher = new IdentityMatcher(userRegex, roleRegex, groupRegex);
@@ -56,7 +55,7 @@ public class QueryAccessRule
     public Optional<Set<AccessMode>> match(String user, Set<String> roles, Set<String> groups, Optional<String> queryOwner)
     {
         if (identityMatcher.matches(user, roles, groups) &&
-                ((queryOwner.isEmpty() && queryOwnerRegex.isEmpty()) || (queryOwner.isPresent() && queryOwnerRegex.map(regex -> regex.matcher(queryOwner.get()).matches()).orElse(true)))) {
+                ((queryOwner.isEmpty() && queryOwnerRegex.isEmpty()) || (queryOwner.isPresent() && queryOwnerRegex.map(regex -> regex.matches(queryOwner.get())).orElse(true)))) {
             return Optional.of(allow);
         }
         return Optional.empty();

@@ -16,18 +16,17 @@ package io.trino.plugin.base.security;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static java.util.Objects.requireNonNull;
 
 public class IdentityMatcher
 {
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
-    private final Optional<Pattern> groupRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
+    private final Optional<StringMatcher> groupRegex;
 
-    public IdentityMatcher(Optional<Pattern> userRegex, Optional<Pattern> roleRegex, Optional<Pattern> groupRegex)
+    public IdentityMatcher(Optional<StringMatcher> userRegex, Optional<StringMatcher> roleRegex, Optional<StringMatcher> groupRegex)
     {
         this.userRegex = requireNonNull(userRegex, "userRegex is null");
         this.roleRegex = requireNonNull(roleRegex, "roleRegex is null");
@@ -36,12 +35,12 @@ public class IdentityMatcher
 
     public boolean matches(String user, Set<String> roles, Set<String> groups)
     {
-        return userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true) &&
-                groupRegex.map(regex -> groups.stream().anyMatch(group -> regex.matcher(group).matches())).orElse(true);
+        return userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true) &&
+                groupRegex.map(regex -> regex.matchesAny(groups)).orElse(true);
     }
 
-    public Optional<Pattern> getRoleRegex()
+    public Optional<StringMatcher> getRoleRegex()
     {
         return roleRegex;
     }
@@ -56,25 +55,15 @@ public class IdentityMatcher
             return false;
         }
         IdentityMatcher that = (IdentityMatcher) o;
-        return patternEquals(userRegex, that.userRegex) &&
-                patternEquals(roleRegex, that.roleRegex) &&
-                patternEquals(groupRegex, that.groupRegex);
-    }
-
-    private static boolean patternEquals(Optional<Pattern> left, Optional<Pattern> right)
-    {
-        if (left.isEmpty() || right.isEmpty()) {
-            return left.isEmpty() == right.isEmpty();
-        }
-        Pattern leftPattern = left.get();
-        Pattern rightPattern = right.get();
-        return leftPattern.pattern().equals(rightPattern.pattern()) && leftPattern.flags() == rightPattern.flags();
+        return Objects.equals(userRegex, that.userRegex) &&
+                Objects.equals(roleRegex, that.roleRegex) &&
+                Objects.equals(groupRegex, that.groupRegex);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(userRegex.map(Pattern::pattern), roleRegex.map(Pattern::pattern), groupRegex.map(Pattern::pattern));
+        return Objects.hash(userRegex, roleRegex, groupRegex);
     }
 
     @Override

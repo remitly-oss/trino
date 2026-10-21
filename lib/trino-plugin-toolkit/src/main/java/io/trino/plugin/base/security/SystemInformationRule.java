@@ -22,7 +22,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
@@ -33,14 +32,14 @@ import static java.util.function.Function.identity;
 public class SystemInformationRule
 {
     private final Set<AccessMode> allow;
-    private final Optional<Pattern> userRegex;
-    private final Optional<Pattern> roleRegex;
+    private final Optional<StringMatcher> userRegex;
+    private final Optional<StringMatcher> roleRegex;
 
     @JsonCreator
     public SystemInformationRule(
             @JsonProperty("allow") Set<AccessMode> allow,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex)
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex)
     {
         this.allow = ImmutableSet.copyOf(requireNonNull(allow, "allow is null"));
         this.userRegex = requireNonNull(userRegex, "userRegex is null");
@@ -49,8 +48,8 @@ public class SystemInformationRule
 
     public Optional<Set<AccessMode>> match(String user, Set<String> roles)
     {
-        if (userRegex.map(regex -> regex.matcher(user).matches()).orElse(true) &&
-                roleRegex.map(regex -> roles.stream().anyMatch(role -> regex.matcher(role).matches())).orElse(true)) {
+        if (userRegex.map(regex -> regex.matches(user)).orElse(true) &&
+                roleRegex.map(regex -> regex.matchesAny(roles)).orElse(true)) {
             return Optional.of(allow);
         }
         return Optional.empty();

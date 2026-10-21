@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.plugin.base.security.TableAccessControlRule.TablePrivilege.GRANT_SELECT;
@@ -60,9 +59,9 @@ public class TableAccessControlRule
             @JsonProperty("columns") Optional<List<ColumnConstraint>> columns,
             @JsonProperty("filter") Optional<String> filter,
             @JsonProperty("filter_environment") Optional<ExpressionEnvironment> filterEnvironment,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
             @JsonProperty("schema") Optional<UserSubstitutingPattern> schemaPattern,
             @JsonProperty("table") Optional<UserSubstitutingPattern> tablePattern)
     {

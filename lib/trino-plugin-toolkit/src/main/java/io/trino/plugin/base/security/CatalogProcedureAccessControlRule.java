@@ -21,7 +21,6 @@ import io.trino.spi.connector.CatalogSchemaRoutineName;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.ProcedureAccessControlRule.ProcedurePrivilege.EXECUTE;
 import static io.trino.plugin.base.security.ProcedureAccessControlRule.ProcedurePrivilege.GRANT_EXECUTE;
@@ -44,12 +43,12 @@ public class CatalogProcedureAccessControlRule
     @JsonCreator
     public CatalogProcedureAccessControlRule(
             @JsonProperty("privileges") Set<ProcedurePrivilege> privileges,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
             @JsonProperty("catalog") Optional<UserSubstitutingPattern> catalogPattern,
             @JsonProperty("schema") Optional<UserSubstitutingPattern> schemaPattern,
-            @JsonProperty("procedure") Optional<Pattern> procedureRegex)
+            @JsonProperty("procedure") Optional<StringMatcher> procedureRegex)
     {
         this(catalogPattern, new ProcedureAccessControlRule(privileges, userRegex, roleRegex, groupRegex, schemaPattern, procedureRegex));
     }

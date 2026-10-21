@@ -20,7 +20,6 @@ import io.trino.spi.connector.SchemaRoutineName;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.ProcedureAccessControlRule.ProcedurePrivilege.EXECUTE;
 import static io.trino.plugin.base.security.ProcedureAccessControlRule.ProcedurePrivilege.GRANT_EXECUTE;
@@ -31,16 +30,16 @@ public class ProcedureAccessControlRule
     private final Set<ProcedurePrivilege> privileges;
     private final IdentityMatcher identityMatcher;
     private final Optional<UserSubstitutingPattern> schemaPattern;
-    private final Optional<Pattern> procedureRegex;
+    private final Optional<StringMatcher> procedureRegex;
 
     @JsonCreator
     public ProcedureAccessControlRule(
             @JsonProperty("privileges") Set<ProcedurePrivilege> privileges,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
             @JsonProperty("schema") Optional<UserSubstitutingPattern> schemaPattern,
-            @JsonProperty("procedure") Optional<Pattern> procedureRegex)
+            @JsonProperty("procedure") Optional<StringMatcher> procedureRegex)
     {
         this.privileges = ImmutableSet.copyOf(requireNonNull(privileges, "privileges is null"));
         this.identityMatcher = new IdentityMatcher(userRegex, roleRegex, groupRegex);
@@ -52,7 +51,7 @@ public class ProcedureAccessControlRule
     {
         return identityMatcher.matches(user, roles, groups) &&
                 schemaPattern.map(pattern -> pattern.matches(user, procedureName.getSchemaName())).orElse(true) &&
-                procedureRegex.map(regex -> regex.matcher(procedureName.getRoutineName()).matches()).orElse(true);
+                procedureRegex.map(regex -> regex.matches(procedureName.getRoutineName())).orElse(true);
     }
 
     public boolean canExecuteProcedure()

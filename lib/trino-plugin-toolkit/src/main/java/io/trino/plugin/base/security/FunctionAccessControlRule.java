@@ -22,7 +22,6 @@ import io.trino.spi.function.FunctionKind;
 
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static io.trino.plugin.base.security.FunctionAccessControlRule.FunctionPrivilege.EXECUTE;
 import static io.trino.plugin.base.security.FunctionAccessControlRule.FunctionPrivilege.GRANT_EXECUTE;
@@ -34,16 +33,16 @@ public class FunctionAccessControlRule
     private final Set<FunctionPrivilege> privileges;
     private final IdentityMatcher identityMatcher;
     private final Optional<UserSubstitutingPattern> schemaPattern;
-    private final Optional<Pattern> functionRegex;
+    private final Optional<StringMatcher> functionRegex;
 
     @JsonCreator
     public FunctionAccessControlRule(
             @JsonProperty("privileges") Set<FunctionPrivilege> privileges,
-            @JsonProperty("user") Optional<Pattern> userRegex,
-            @JsonProperty("role") Optional<Pattern> roleRegex,
-            @JsonProperty("group") Optional<Pattern> groupRegex,
+            @JsonProperty("user") Optional<StringMatcher> userRegex,
+            @JsonProperty("role") Optional<StringMatcher> roleRegex,
+            @JsonProperty("group") Optional<StringMatcher> groupRegex,
             @JsonProperty("schema") Optional<UserSubstitutingPattern> schemaPattern,
-            @JsonProperty("function") Optional<Pattern> functionRegex,
+            @JsonProperty("function") Optional<StringMatcher> functionRegex,
             @JsonProperty("function_kinds") @JsonAlias("functionKinds") Set<FunctionKind> functionKinds)
     {
         this.privileges = ImmutableSet.copyOf(requireNonNull(privileges, "privileges is null"));
@@ -59,7 +58,7 @@ public class FunctionAccessControlRule
     {
         return identityMatcher.matches(user, roles, groups) &&
                 schemaPattern.map(pattern -> pattern.matches(user, functionName.getSchemaName())).orElse(true) &&
-                functionRegex.map(regex -> regex.matcher(functionName.getRoutineName()).matches()).orElse(true);
+                functionRegex.map(regex -> regex.matches(functionName.getRoutineName())).orElse(true);
     }
 
     public boolean canExecuteFunction()

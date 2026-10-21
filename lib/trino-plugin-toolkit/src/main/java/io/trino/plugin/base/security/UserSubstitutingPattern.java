@@ -50,7 +50,7 @@ public final class UserSubstitutingPattern
 
     public boolean matches(String user, String value)
     {
-        return patternProvider.pattern(user).matcher(value).matches();
+        return patternProvider.matches(user, value);
     }
 
     @Override
@@ -74,21 +74,21 @@ public final class UserSubstitutingPattern
 
     private interface PatternProvider
     {
-        Pattern pattern(String user);
+        boolean matches(String user, String value);
     }
 
-    private record FixedPatternProvider(Pattern pattern)
+    private record FixedPatternProvider(StringMatcher matcher)
             implements PatternProvider
     {
         public FixedPatternProvider(String rawPattern)
         {
-            this(Pattern.compile(rawPattern));
+            this(StringMatcher.of(rawPattern));
         }
 
         @Override
-        public Pattern pattern(String user)
+        public boolean matches(String user, String value)
         {
-            return pattern;
+            return matcher.matches(value);
         }
     }
 
@@ -109,9 +109,9 @@ public final class UserSubstitutingPattern
         }
 
         @Override
-        public Pattern pattern(String user)
+        public boolean matches(String user, String value)
         {
-            return uncheckedCacheGet(patternsByUser, user, () -> compile(user));
+            return uncheckedCacheGet(patternsByUser, user, () -> compile(user)).matcher(value).matches();
         }
 
         private Pattern compile(String user)
