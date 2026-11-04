@@ -22,6 +22,7 @@ import io.airlift.log.Logger;
 import io.trino.spi.classloader.ThreadContextClassLoader;
 import io.trino.spi.security.GroupProvider;
 import io.trino.spi.security.GroupProviderFactory;
+import io.trino.spi.security.Identity;
 import io.trino.util.Case;
 
 import java.io.File;
@@ -134,6 +135,18 @@ public class GroupProviderManager
     protected void setConfiguredGroupProvider(GroupProvider groupProvider)
     {
         checkState(configuredGroupProvider.compareAndSet(Optional.empty(), Optional.of(groupProvider)), "groupProvider is already set");
+    }
+
+    @Override
+    public Set<String> resolveGroups(Identity identity)
+    {
+        requireNonNull(identity, "identity is null");
+        return configuredGroupProvider.get()
+                .map(provider -> provider.resolveGroups(identity))
+                .map(groups -> groups.stream()
+                        .map(group -> identity.getGroups().contains(group) ? group : this.groupCase.transform(group))
+                        .collect(toImmutableSet()))
+                .orElse(ImmutableSet.copyOf(identity.getGroups()));
     }
 
     @Override

@@ -29,6 +29,7 @@ import io.trino.execution.warnings.WarningCollector;
 import io.trino.operator.scalar.SpecializedSqlScalarFunction;
 import io.trino.security.AccessControl;
 import io.trino.security.ViewAccessControl;
+import io.trino.security.ViewIdentityResolver;
 import io.trino.spi.QueryId;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockEncodingSerde;
@@ -703,9 +704,7 @@ public class LanguageFunctionManager
 
                 Identity identity = identityLoader.get().getFunctionRunAsIdentity(owner);
 
-                Identity newIdentity = Identity.from(identity)
-                        .withGroups(groupProvider.getGroups(identity.getUser()))
-                        .build();
+                Identity newIdentity = ViewIdentityResolver.resolveViewIdentity(groupProvider, identity, session.getIdentity());
 
                 Session functionSession = createFunctionSession(newIdentity);
 

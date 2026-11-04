@@ -21,6 +21,8 @@ import io.trino.client.ProtocolHeaders;
 import io.trino.security.AllowAllAccessControl;
 import io.trino.server.protocol.PreparedStatementEncoder;
 import io.trino.server.protocol.spooling.QueryDataEncoder;
+import io.trino.spi.security.BasicPrincipal;
+import io.trino.spi.security.GroupProvider;
 import io.trino.spi.security.Identity;
 import io.trino.spi.security.SelectedRole;
 import jakarta.ws.rs.WebApplicationException;
@@ -30,6 +32,7 @@ import org.assertj.core.api.AbstractThrowableAssert;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
+import java.util.Set;
 
 import static io.trino.SystemSessionProperties.JOIN_DISTRIBUTION_TYPE;
 import static io.trino.SystemSessionProperties.MAX_HASH_PARTITION_COUNT;
@@ -150,6 +153,49 @@ public class TestHttpRequestSessionContextFactory
 
         assertInvalidSession(protocolHeaders, emptyHeaders)
                 .matches(e -> ((WebApplicationException) e).getResponse().getStatus() == 400);
+    }
+
+    @Test
+    public void testContextualGroupsReplaceInheritedGroupsForBothIdentities()
+    {
+        GroupProvider provider = new GroupProvider()
+        {
+            @Override
+            public Set<String> getGroups(String user)
+            {
+                throw new AssertionError("Session construction must use authenticated context");
+            }
+
+            @Override
+            public Set<String> resolveGroups(Identity identity)
+            {
+                assertThat(identity.getPrincipal()).contains(new BasicPrincipal("hex"));
+                return ImmutableSet.of("squad-TEST-vis");
+            }
+        };
+        HttpRequestSessionContextFactory factory = new HttpRequestSessionContextFactory(
+                new PreparedStatementEncoder(new ProtocolConfig()),
+                createTestingMetadataManager(),
+                provider,
+                new AllowAllAccessControl(),
+                new ProtocolConfig(),
+                QueryDataEncoder.EncoderSelector.noEncoder());
+        Identity authenticated = Identity.forUser("hex")
+                .withPrincipal(new BasicPrincipal("hex"))
+                .withGroups(ImmutableSet.of("admin"))
+                .build();
+        MultivaluedMap<String, String> headers = new MultivaluedHashMap<>();
+        headers.putSingle(TRINO_HEADERS.requestUser(), "alice");
+        headers.putSingle(TRINO_HEADERS.requestOriginalUser(), "bob");
+
+        SessionContext context = factory.createSessionContext(headers, Optional.empty(), Optional.of(authenticated));
+        assertThat(context.getIdentity().getUser()).isEqualTo("alice");
+        assertThat(context.getIdentity().getGroups()).containsExactly("squad-TEST-vis");
+        assertThat(context.getOriginalIdentity().getUser()).isEqualTo("bob");
+        assertThat(context.getOriginalIdentity().getGroups()).containsExactly("squad-TEST-vis");
+        Identity authorized = factory.extractAuthorizedIdentity(Optional.of(authenticated), headers);
+        assertThat(authorized.getUser()).isEqualTo("alice");
+        assertThat(authorized.getGroups()).containsExactly("squad-TEST-vis");
     }
 
     @Test

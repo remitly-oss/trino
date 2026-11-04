@@ -13,9 +13,22 @@
  */
 package io.trino.spi.security;
 
+import java.util.HashSet;
 import java.util.Set;
 
 public interface GroupProvider
 {
     Set<String> getGroups(String user);
+
+    /**
+     * Resolve the complete group set for a session identity. The principal comes from
+     * authentication, while the user may be an impersonated user. Implementations may
+     * replace (not merely augment) groups to constrain impersonated sessions.
+     */
+    default Set<String> resolveGroups(Identity identity)
+    {
+        Set<String> groups = new HashSet<>(identity.getGroups());
+        groups.addAll(getGroups(identity.getUser()));
+        return Set.copyOf(groups);
+    }
 }

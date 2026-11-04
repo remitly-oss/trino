@@ -19,6 +19,7 @@ import io.airlift.configuration.secrets.SecretsResolver;
 import io.airlift.testing.TempFile;
 import io.trino.spi.security.GroupProvider;
 import io.trino.spi.security.GroupProviderFactory;
+import io.trino.spi.security.Identity;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -26,6 +27,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Map;
+import java.util.Set;
 
 import static java.lang.String.format;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,6 +72,38 @@ public class TestGroupProviderManager
     }
 
     @Test
+    void testContextualResolutionDelegatesAndReplacesGroups()
+    {
+        GroupProviderManager manager = new GroupProviderManager(new SecretsResolver(ImmutableMap.of()));
+        manager.setConfiguredGroupProvider(new GroupProvider()
+        {
+            @Override
+            public Set<String> getGroups(String user)
+            {
+                throw new AssertionError("Must use contextual resolution");
+            }
+
+            @Override
+            public Set<String> resolveGroups(Identity identity)
+            {
+                return ImmutableSet.of("restricted");
+            }
+        });
+        assertThat(manager.resolveGroups(Identity.forUser("alice").withGroups(ImmutableSet.of("admin")).build()))
+                .containsExactly("restricted");
+    }
+
+    @Test
+    void testDefaultContextualResolutionPreservesInheritedGroups()
+    {
+        GroupProviderManager manager = new GroupProviderManager(new SecretsResolver(ImmutableMap.of()));
+        Identity identity = Identity.forUser("alice").withGroups(ImmutableSet.of("inherited")).build();
+        assertThat(manager.resolveGroups(identity)).containsExactly("inherited");
+        manager.setConfiguredGroupProvider(TEST_GROUP_PROVIDER);
+        assertThat(manager.resolveGroups(identity)).containsExactlyInAnyOrder("inherited", "test", "alice");
+    }
+
+    @Test
     void setTestGroupProviderUpperCase()
             throws Exception
     {
@@ -86,6 +120,8 @@ public class TestGroupProviderManager
 
             assertThat(groupProviderManager.getGroups("Alice")).isEqualTo(ImmutableSet.of("TEST", "ALICE"));
             assertThat(groupProviderManager.getGroups("Bob")).isEqualTo(ImmutableSet.of("TEST", "BOB"));
+            assertThat(groupProviderManager.resolveGroups(Identity.forUser("Alice").withGroups(ImmutableSet.of("inherited")).build()))
+                    .containsExactlyInAnyOrder("inherited", "TEST", "ALICE");
         }
     }
 

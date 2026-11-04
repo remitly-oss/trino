@@ -8,10 +8,18 @@ This mapping is performed by a `GroupProvider` implementation.
 `GroupProviderFactory` is responsible for creating a `GroupProvider` instance.
 It also defines the name of the group provider as used in the configuration file.
 
-`GroupProvider` contains a one method, `getGroups(String user)`
+`GroupProvider` contains a `getGroups(String user)` method
 which returns a `Set<String>` of group names.
 This set of group names becomes part of the `Identity` and `ConnectorIdentity`
 objects representing the user, and can then be used by {doc}`system-access-control`.
+
+The Remitly fork also calls `resolveGroups(Identity identity)` while building both
+session and original identities. The default method preserves inherited groups and
+adds the username's groups. An implementation may instead return a replacement group
+set based on the authenticated principal (for example, to constrain service-account
+impersonation). The identity's username may be client-selected; the principal is from
+authentication. Do not select privileged groups from a client source/group header.
+Existing username-only providers retain their default behavior.
 
 The implementation of `GroupProvider` and its corresponding `GroupProviderFactory`
 must be wrapped as a Trino plugin and installed on the cluster.

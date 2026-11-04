@@ -264,8 +264,10 @@ public class HttpRequestSessionContextFactory
                 .orElseGet(() -> Identity.forUser(user))
                 .withAdditionalConnectorRoles(parseConnectorRoleHeaders(protocolHeaders, headers))
                 .withAdditionalExtraCredentials(parseExtraCredentials(protocolHeaders, headers))
-                .withAdditionalGroups(groupProvider.getGroups(user))
                 .withEnabledRoles(systemEnabledRoles.build())
+                .build();
+        newIdentity = Identity.from(newIdentity)
+                .withGroups(groupProvider.resolveGroups(newIdentity))
                 .build();
         return addEnabledRoles(newIdentity, systemRole, metadata);
     }
@@ -280,7 +282,10 @@ public class HttpRequestSessionContextFactory
             Identity newIdentity = Identity.from(identity)
                     .withUser(originalUser)
                     .withExtraCredentials(new HashMap<>())
-                    .withGroups(groupProvider.getGroups(originalUser))
+                    .withGroups(ImmutableSet.of())
+                    .build();
+            newIdentity = Identity.from(newIdentity)
+                    .withGroups(groupProvider.resolveGroups(newIdentity))
                     .build();
             if (originalRoles.isPresent()) {
                 newIdentity = addEnabledRoles(newIdentity, SelectedRole.valueOf(originalRoles.get()), metadata);

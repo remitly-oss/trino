@@ -60,6 +60,7 @@ import io.trino.security.AllowAllAccessControl;
 import io.trino.security.InjectedConnectorAccessControl;
 import io.trino.security.SecurityContext;
 import io.trino.security.ViewAccessControl;
+import io.trino.security.ViewIdentityResolver;
 import io.trino.spi.TrinoException;
 import io.trino.spi.TrinoWarning;
 import io.trino.spi.connector.CatalogSchemaName;
@@ -5727,9 +5728,7 @@ class StatementAnalyzer
                 Identity identity;
                 AccessControl viewAccessControl;
                 if (owner.isPresent()) {
-                    identity = Identity.from(owner.get())
-                            .withGroups(groupProvider.getGroups(owner.get().getUser()))
-                            .build();
+                    identity = ViewIdentityResolver.resolveViewIdentity(groupProvider, owner.get(), session.getIdentity());
                     if (owner.get().getUser().equals(session.getIdentity().getUser())) {
                         // View owner does not need GRANT OPTION to grant access themselves
                         viewAccessControl = accessControl;
