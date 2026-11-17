@@ -1793,6 +1793,23 @@ public class TestIcebergV2
     }
 
     @Test
+    public void testMetadataQueryOnSnapshotReferenceAfterPartitionColumnRename()
+    {
+        try (TestTable table = newTrinoTable("test_branch_metadata_query_", "(id integer, part integer) WITH (partitioning = ARRAY['part'])", ImmutableList.of("(1, 10)"))) {
+            String tableName = table.getName();
+            createTagAndBranchAtCurrentSnapshot(tableName);
+            assertUpdate("INSERT INTO " + tableName + " VALUES (2, 20)", 1);
+            assertUpdate("ALTER TABLE " + tableName + " RENAME COLUMN part TO p2");
+
+            Session session = Session.builder(getSession())
+                    .setSystemProperty("optimize_metadata_queries", "true")
+                    .build();
+            assertThat(query(session, "SELECT max(p2) FROM " + tableName + " FOR VERSION AS OF 'test-branch' WHERE p2 = 10"))
+                    .matches("VALUES 10");
+        }
+    }
+
+    @Test
     public void testNestedFieldPartitioning()
     {
         try (TestTable table = newTrinoTable("test_nested_field_partitioning_cleanup_", "(id INT, district ROW(name VARCHAR), state ROW(name VARCHAR)) WITH (partitioning = ARRAY['\"state.name\"'])")) {
