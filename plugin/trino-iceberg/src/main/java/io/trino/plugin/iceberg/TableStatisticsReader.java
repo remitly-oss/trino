@@ -40,6 +40,8 @@ import org.apache.iceberg.DataFile;
 import org.apache.iceberg.ManifestFile;
 import org.apache.iceberg.ManifestFiles;
 import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.StatisticsFile;
 import org.apache.iceberg.Table;
@@ -116,6 +118,8 @@ public final class TableStatisticsReader
         return makeTableStatistics(
                 typeManager,
                 icebergTable,
+                // Tags, snapshot IDs and timestamps read with the snapshot's schema, branches with the table's
+                SchemaParser.fromJson(tableHandle.getTableSchemaJson()),
                 tableHandle.getSnapshotId(),
                 tableHandle.getEnforcedPredicate(),
                 tableHandle.getUnenforcedPredicate(),
@@ -127,6 +131,19 @@ public final class TableStatisticsReader
     public static TableStatistics makeTableStatistics(
             TypeManager typeManager,
             Table icebergTable,
+            OptionalLong snapshot,
+            TupleDomain<IcebergColumnHandle> enforcedConstraint,
+            TupleDomain<IcebergColumnHandle> unenforcedConstraint,
+            Set<IcebergColumnHandle> projectedColumns,
+            ExecutorService icebergPlanningExecutor)
+    {
+        return makeTableStatistics(typeManager, icebergTable, icebergTable.schema(), snapshot, enforcedConstraint, unenforcedConstraint, projectedColumns, icebergPlanningExecutor);
+    }
+
+    private static TableStatistics makeTableStatistics(
+            TypeManager typeManager,
+            Table icebergTable,
+            Schema readSchema,
             OptionalLong snapshot,
             TupleDomain<IcebergColumnHandle> enforcedConstraint,
             TupleDomain<IcebergColumnHandle> unenforcedConstraint,
@@ -158,11 +175,13 @@ public final class TableStatisticsReader
         Domain partitionDomain = getPartitionDomain(effectivePredicate);
         Domain pathDomain = getPathDomain(effectivePredicate);
         Expression filter = toIcebergExpression(effectivePredicate.filter((column, _) -> !isMetadataColumnId(column.getId())));
+        // The filter names columns as the read schema does, so the partition specs that bind it must use that schema too
+        Map<Integer, PartitionSpec> specs = specsBoundTo(icebergTable, readSchema);
 
         NonEvictableLoadingCache<Integer, ManifestEvaluator> manifestPartitionFilterEvaluators = buildNonEvictableCache(
                 CacheBuilder.newBuilder().maximumSize(1000),
                 CacheLoader.from(specId -> {
-                    PartitionSpec partitionSpec = icebergTable.specs().get(specId);
+                    PartitionSpec partitionSpec = specs.get(specId);
                     return ManifestEvaluator.forRowFilter(filter, partitionSpec, true);
                 }));
         List<ManifestFile> filteredManifests = icebergTable.snapshot(snapshotId)
@@ -180,7 +199,7 @@ public final class TableStatisticsReader
 
         ImmutableList.Builder<Types.NestedField> columnsBuilder = ImmutableList.builder();
         ImmutableList.Builder<Type> columnTypesBuilder = ImmutableList.builder();
-        for (Types.NestedField column : icebergTable.schema().columns()) {
+        for (Types.NestedField column : readSchema.columns()) {
             if (columnIds.contains(column.fieldId())) {
                 columnsBuilder.add(column);
                 columnTypesBuilder.add(toTrinoType(column.type(), typeManager));
@@ -193,7 +212,7 @@ public final class TableStatisticsReader
         // Decode small manifest sets inline to avoid bottlenecking small scans on resource contention in the shared planning pool
         if (filteredManifests.size() < INLINE_MANIFEST_DECODE_THRESHOLD) {
             for (ManifestFile manifestFile : filteredManifests) {
-                collectManifestStatistics(icebergStatisticsBuilder, icebergTable, manifestFile, filter, columnIds, partitionDomain, pathDomain);
+                collectManifestStatistics(icebergStatisticsBuilder, icebergTable, specs, manifestFile, filter, columnIds, partitionDomain, pathDomain);
             }
         }
         else {
@@ -203,7 +222,7 @@ public final class TableStatisticsReader
             List<Callable<Void>> tasks = filteredManifests.stream()
                     .map(manifestFile -> (Callable<Void>) () -> {
                         IcebergStatistics.Builder statisticsBuilder = new IcebergStatistics.Builder(columns, columnTypes, typeManager);
-                        collectManifestStatistics(statisticsBuilder, icebergTable, manifestFile, filter, columnIds, partitionDomain, pathDomain);
+                        collectManifestStatistics(statisticsBuilder, icebergTable, specs, manifestFile, filter, columnIds, partitionDomain, pathDomain);
                         synchronized (icebergStatisticsBuilder) {
                             icebergStatisticsBuilder.merge(statisticsBuilder);
                         }
@@ -368,18 +387,29 @@ public final class TableStatisticsReader
         };
     }
 
+    private static Map<Integer, PartitionSpec> specsBoundTo(Table icebergTable, Schema schema)
+    {
+        Map<Integer, PartitionSpec> specs = icebergTable.specs();
+        if (schema.schemaId() == icebergTable.schema().schemaId()) {
+            return specs;
+        }
+        return specs.entrySet().stream()
+                .collect(toImmutableMap(Entry::getKey, entry -> entry.getValue().toUnbound().bind(schema, true)));
+    }
+
     private static void collectManifestStatistics(
             IcebergStatistics.Builder statisticsBuilder,
             Table icebergTable,
+            Map<Integer, PartitionSpec> specs,
             ManifestFile manifestFile,
             Expression filter,
             Set<Integer> columnIds,
             Domain partitionDomain,
             Domain pathDomain)
     {
-        try (CloseableIterable<DataFile> dataFiles = readManifest(icebergTable, manifestFile, filter, columnIds)) {
+        try (CloseableIterable<DataFile> dataFiles = readManifest(icebergTable, specs, manifestFile, filter, columnIds)) {
             for (DataFile dataFile : dataFiles) {
-                PartitionSpec spec = icebergTable.specs().get(dataFile.specId());
+                PartitionSpec spec = specs.get(dataFile.specId());
                 if (!partitionDomain.isAll() && !partitionDomain.includesNullableValue(utf8Slice(spec.partitionToPath(dataFile.partition())))) {
                     continue;
                 }
@@ -396,11 +426,11 @@ public final class TableStatisticsReader
         }
     }
 
-    private static CloseableIterable<DataFile> readManifest(Table icebergTable, ManifestFile manifestFile, Expression filter, Set<Integer> columnIds)
+    private static CloseableIterable<DataFile> readManifest(Table icebergTable, Map<Integer, PartitionSpec> specs, ManifestFile manifestFile, Expression filter, Set<Integer> columnIds)
     {
         return CloseableIterable.transform(
                 liveEntries(
-                        ManifestFiles.read(manifestFile, icebergTable.io(), icebergTable.specs())
+                        ManifestFiles.read(manifestFile, icebergTable.io(), specs)
                                 .select(ImmutableSet.of(
                                         "partition",
                                         "file_path",

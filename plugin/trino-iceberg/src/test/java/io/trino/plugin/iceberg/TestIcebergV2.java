@@ -1810,6 +1810,31 @@ public class TestIcebergV2
     }
 
     @Test
+    public void testStatisticsForSnapshotReferenceAfterColumnRename()
+    {
+        try (TestTable table = newTrinoTable("test_statistics_snapshot_reference_rename_", "(id integer, data varchar)", ImmutableList.of("(1, 'a')", "(2, 'b')"))) {
+            String tableName = table.getName();
+            long refSnapshotId = createTagAndBranchAtCurrentSnapshot(tableName);
+            // Move main past the tag: Iceberg's scan does not rebind partition specs when time travel targets the current snapshot
+            assertUpdate("INSERT INTO " + tableName + " VALUES (3, 'c')", 1);
+            assertUpdate("ALTER TABLE " + tableName + " RENAME COLUMN data TO payload");
+
+            // Tags and snapshot IDs read with the snapshot's schema, so filters name columns as they were then,
+            // and statistics must bind the partition specs to that schema rather than the table's current one
+            for (String version : List.of("'test-tag'", Long.toString(refSnapshotId))) {
+                String query = "SELECT id FROM " + tableName + " FOR VERSION AS OF " + version + " WHERE data = 'a'";
+                assertThat(query(query)).matches("VALUES 1");
+                assertQuerySucceeds("SHOW STATS FOR (" + query + ")");
+            }
+
+            // Branches read with the table's current schema
+            String branchQuery = "SELECT id FROM " + tableName + " FOR VERSION AS OF 'test-branch' WHERE payload = 'a'";
+            assertThat(query(branchQuery)).matches("VALUES 1");
+            assertQuerySucceeds("SHOW STATS FOR (" + branchQuery + ")");
+        }
+    }
+
+    @Test
     public void testNestedFieldPartitioning()
     {
         try (TestTable table = newTrinoTable("test_nested_field_partitioning_cleanup_", "(id INT, district ROW(name VARCHAR), state ROW(name VARCHAR)) WITH (partitioning = ARRAY['\"state.name\"'])")) {
